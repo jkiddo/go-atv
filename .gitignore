@@ -1,0 +1,16 @@
+# Local pairing credentials
+/goatv-credentials*
+/goatv-airplay-credentials*
+/.goatv/
+
+# Locally built commands and test artifacts
+/goatv
+/goatv.exe
+/bin/
+/dist/
+*.test
+*.test.exe
+/coverage.out
+
+# macOS metadata
+.DS_Store
