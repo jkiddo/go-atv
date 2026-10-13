@@ -245,7 +245,7 @@ real-time ticker. Tests use random loopback ports and do not advertise on the LA
 The standalone receiver implements legacy AirPlay video (HTTP/RTSP), including
 `/info`, `/play`, `/playback-info`, rate changes, session-aware `/stop`, feedback,
 and legacy pair-verify. `FailNextPlay` returns HTTP 500 once so the client's retry
-path can be exercised. It does not implement interactive PIN setup, AirPlay 2
+path can be exercised. The default mode does not implement interactive PIN setup, AirPlay 2
 or Companion; the existing encrypted AirPlay 2 and Companion loopback tests remain
 in place.
 
@@ -277,3 +277,57 @@ To opt into the separate LAN discovery test, use this machine's actual IPv4:
 ```sh
 SIMULATOR_MDNS_IP=192.168.1.35 go test -race ./simulator -run TestMDNSDiscovery -v
 ```
+
+## Experimental native legacy video (`fp-setup2`)
+
+`airplay.WithFairPlayControl(true)` opts `PlayURL` into fresh pair verification,
+SAP, and AES-GCM control records on separate command and reverse-event sockets.
+The CLI exposes the same option with `-fairplay-control`. It applies only to
+legacy video receivers, defaults off, and does not fall back to plaintext on
+failure. Normal pairing must still be completed for a protected receiver.
+
+The parent RTSP SETUP/RECORD/feedback/TEARDOWN lifecycle remains active. Playback
+completion, cancellation and stale-session cleanup use session-scoped stop;
+reconnections negotiate fresh crypto instead of reusing a failed record stream.
+Receiver signatures are checked when the advertised `pk` is supplied through
+`WithProperties`. Discovery keys are not an out-of-band trust anchor.
+
+For protocol tests use `simulator.Config{FairPlay: true}` or
+`go run ./cmd/simulator -fairplay -listen 127.0.0.1:17000`. Optional `-pin 1234`
+exercises legacy SRP PIN pairing. `-password test-password` enables Digest
+protection; combine both flags to require both. `-hide-password-status` omits
+the password advertisement while still challenging authentication. Wrong PINs,
+passwords, and unknown paired controllers are rejected.
+
+For QuickTime discovery on your LAN:
+
+```sh
+go run ./cmd/simulator -fairplay -listen 0.0.0.0:17000 \
+  -mdns-ip YOUR_MAC_LAN_IP -name "Broadster FP Lab"
+```
+
+The simulator announces both AirPlay and RAOP. `-mdns-backend auto` uses native
+`/usr/bin/dns-sd` on macOS in FairPlay mode and the Go responder elsewhere.
+The native children are stopped when the receiver closes. `go` and `native`
+explicitly select a backend; native requires macOS. No Python wrapper is needed.
+
+The lab accepts native QuickTime command and encrypted reverse-event traffic.
+It also opens a real parent TCP event port, sends a command and validates its
+acknowledgement, and sends three UDP timing probes to the sender. State counters
+expose replies and errors. Session validation requires pair verification, SAP,
+SETUP and RECORD before playback; teardown ends the owning session. Dropping
+the owning parent connection also ends playback. It never fetches or decodes media.
+
+Validated with QuickTime on macOS 27.0.1, including parent-event acknowledgement
+and three timing replies. The full Go race suite covers session order, malformed
+and fragmented messages, timing reply validation, visible/hidden password and
+combined PIN/password authentication, fresh replay and cancellation. LAN checks
+are opt-in:
+
+```sh
+go test -race ./...
+SIMULATOR_MDNS_IP=YOUR_MAC_LAN_IP go test -race ./simulator -run TestFairPlayMDNSDiscovery -v
+```
+
+Physical Apple TV playback and screen-code refresh remain unverified. Broadster's
+`pi/tools/airplay-research` contains reproduction notes and sanitized evidence.

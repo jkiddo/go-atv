@@ -50,6 +50,7 @@ Flags (for all commands except scan):
                            AirPlay credentials file (default ~/.goatv/credentials-airplay)
   -client-name <name>      Name shown on the Apple TV (default "goatv")
   -timeout <duration>      Discovery timeout (default 5s)
+  -fairplay-control       Opt into experimental legacy fp-setup2 video
   -position <seconds>      Start position for play (default 0)
 `)
 	os.Exit(2)
@@ -68,6 +69,7 @@ func run() error {
 	airplayCredentials := flags.String("airplay-credentials", defaultCredentialsPath()+"-airplay", "AirPlay credentials file")
 	clientName := flags.String("client-name", "goatv", "client name shown on the Apple TV")
 	timeout := flags.Duration("timeout", 5*time.Second, "discovery timeout")
+	fairPlay := flags.Bool("fairplay-control", false, "experimental legacy fp-setup2 video")
 	position := flags.Float64("position", 0, "start position in seconds for play")
 	if err := flags.Parse(os.Args[2:]); err != nil {
 		return err
@@ -81,7 +83,7 @@ func run() error {
 	}
 
 	if command == "pair-airplay" || command == "play" {
-		client, err := airplayClient(ctx, *host, *deviceName, *clientName, *airplayCredentials, *timeout)
+		client, err := airplayClient(ctx, *host, *deviceName, *clientName, *airplayCredentials, *timeout, airplay.WithFairPlayControl(*fairPlay))
 		if err != nil {
 			return err
 		}
@@ -137,9 +139,9 @@ func run() error {
 
 // airplayClient resolves an AirPlay receiver (via -host or discovery) and
 // returns a client for it.
-func airplayClient(ctx context.Context, host, name, clientName, credentials string, timeout time.Duration) (*airplay.Client, error) {
+func airplayClient(ctx context.Context, host, name, clientName, credentials string, timeout time.Duration, extra ...airplay.Option) (*airplay.Client, error) {
 	if host != "" {
-		return airplay.New(clientName, credentials, host), nil
+		return airplay.New(clientName, credentials, host, extra...), nil
 	}
 	devices, err := airplay.Discover(ctx, timeout)
 	if err != nil {
@@ -149,7 +151,7 @@ func airplayClient(ctx context.Context, host, name, clientName, credentials stri
 		for _, device := range devices {
 			if strings.EqualFold(device.Name, name) {
 				return airplay.New(clientName, credentials, device.IP,
-					airplay.WithPort(device.Port), airplay.WithProperties(device.Properties)), nil
+					append(append([]airplay.Option(nil), extra...), airplay.WithPort(device.Port), airplay.WithProperties(device.Properties))...), nil
 			}
 		}
 		var names []string
@@ -162,7 +164,7 @@ func airplayClient(ctx context.Context, host, name, clientName, credentials stri
 	if len(devices) == 1 {
 		device := devices[0]
 		return airplay.New(clientName, credentials, device.IP,
-			airplay.WithPort(device.Port), airplay.WithProperties(device.Properties)), nil
+			append(append([]airplay.Option(nil), extra...), airplay.WithPort(device.Port), airplay.WithProperties(device.Properties))...), nil
 	}
 	if len(devices) == 0 {
 		return nil, fmt.Errorf("no AirPlay devices found; specify -host")

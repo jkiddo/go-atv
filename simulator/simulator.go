@@ -21,40 +21,75 @@ type Config struct {
 	Name     string
 	Duration time.Duration
 	// AdvertiseIP opts into LAN discovery. Bind Listen to this IP or a wildcard.
-	AdvertiseIP string
-	Password    string
+	AdvertiseIP        string
+	DiscoveryBackend   string // auto (native Bonjour for FairPlay on macOS), go, or native
+	HidePasswordStatus bool   // FairPlay lab: challenge SETUP even when TXT omits password requirement
+	Password           string
+	PIN                string              // explicit, simulator-only legacy pairing PIN
+	FairPlay           bool                // opt-in native sender interoperability lab
+	Trace              func(ProtocolEvent) // metadata only; never emits keys or bodies
 }
 
 // State is a copy of receiver playback state. URLs are recorded, never fetched.
 type State struct {
-	URL         string  `json:"url"`
-	PlayerState string  `json:"playerState"`
-	Position    float64 `json:"position"`
-	Duration    float64 `json:"duration"`
-	RepeatMode  string  `json:"repeatMode,omitempty"`
-	PlayCount   int     `json:"playCount"`
-	Loops       int     `json:"loops"`
+	URL               string  `json:"url"`
+	PlayerState       string  `json:"playerState"`
+	Position          float64 `json:"position"`
+	Duration          float64 `json:"duration"`
+	RepeatMode        string  `json:"repeatMode,omitempty"`
+	PlayCount         int     `json:"playCount"`
+	Loops             int     `json:"loops"`
+	EncryptedRequests int     `json:"encryptedRequests"`
+	EventConnections  int     `json:"eventConnections"`
+	EventRequests     int     `json:"eventRequests"`
+	EventResponses    int     `json:"eventResponses"`
+	EventErrors       int     `json:"eventErrors"`
+	TimingProbes      int     `json:"timingProbes"`
+	TimingReplies     int     `json:"timingReplies"`
+	TimingErrors      int     `json:"timingErrors"`
+	DigestChallenges  int     `json:"digestChallenges"`
+	FairPlaySetups    int     `json:"fairPlaySetups"`
 }
 
 type Receiver struct {
-	id                string
-	mu                sync.Mutex
-	config            Config
-	listener          net.Listener
-	connections       map[net.Conn]struct{}
-	wg                sync.WaitGroup
-	once              sync.Once
-	closed            bool
-	shutdownDiscovery func()
-	state             State
-	failNext          bool
-	credentials       hap.Credentials
-	nonce             string
-	session           string
+	id                     string
+	mu                     sync.Mutex
+	config                 Config
+	listener               net.Listener
+	connections            map[net.Conn]struct{}
+	wg                     sync.WaitGroup
+	once                   sync.Once
+	closed                 bool
+	shutdownDiscovery      func()
+	state                  State
+	failNext               bool
+	credentials            hap.Credentials
+	passwordAuth           *receiverDigestAuth
+	recordedParents        map[net.Conn]bool
+	nonce                  string
+	session                string
+	controllers            map[string]bool
+	reversePeers           map[*reversePeer]struct{}
+	fairPlayParents        map[string]net.Conn
+	fairPlayPlaybackParent net.Conn
 }
 
 // New starts a receiver. Close it after use. Discovery is opt-in.
 func New(config Config) (*Receiver, error) {
+	if config.DiscoveryBackend != "" && config.DiscoveryBackend != "auto" && config.DiscoveryBackend != "go" && config.DiscoveryBackend != "native" {
+		return nil, errors.New("unknown discovery backend")
+	}
+	if config.PIN != "" && (!config.FairPlay || len(config.PIN) != 4) {
+		return nil, errors.New("PIN requires FairPlay lab mode and four digits")
+	}
+	for _, ch := range config.PIN {
+		if ch < '0' || ch > '9' {
+			return nil, errors.New("PIN must contain only digits")
+		}
+	}
+	if config.HidePasswordStatus && (!config.FairPlay || config.Password == "") {
+		return nil, errors.New("HidePasswordStatus requires FairPlay and Password")
+	}
 	if config.Listen == "" {
 		config.Listen = "127.0.0.1:0"
 	}
@@ -72,7 +107,15 @@ func New(config Config) (*Receiver, error) {
 	if _, err := rand.Read(identity); err != nil {
 		return nil, err
 	}
+	identity[6] = (identity[6] & 0x0f) | 0x40
+	identity[8] = (identity[8] & 0x3f) | 0x80
 	r.id = hex.EncodeToString(identity)
+	var authErr error
+	r.passwordAuth, authErr = newReceiverDigestAuth(config.Password)
+	if authErr != nil {
+		return nil, authErr
+	}
+	r.recordedParents = make(map[net.Conn]bool)
 	if err := r.listen(); err != nil {
 		return nil, err
 	}

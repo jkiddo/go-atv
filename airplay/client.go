@@ -30,6 +30,7 @@ type Client struct {
 	port              int
 	properties        map[string]string
 	authMode          string
+	fairPlayControl   bool
 	deviceID          string
 	playbackHandler   func(map[string]any)
 	diagnosticHandler func(DiagnosticEvent)
@@ -327,6 +328,12 @@ func (c *Client) PlayURL(ctx context.Context, mediaURL string, position float64)
 	// Unknown features (no discovery data and no /info) are treated as
 	// AirPlay 2, which covers all recent hardware.
 	legacy := features != 0 && !features.isVersion2()
+	if c.fairPlayControl {
+		if !legacy {
+			return errors.New("airplay: fp-setup2 is enabled only for legacy video receivers")
+		}
+		return c.playURLFairPlay(ctx, rtsp, credentials, mediaURL, position)
+	}
 	if c.openAuth() || (legacy && credentials == nil) {
 		// Open receiver (declared as having no security, or a v1 receiver
 		// without stored credentials): stream the unauthenticated v1 flow.

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/jkiddo/go-atv/simulator"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -25,10 +26,17 @@ func run() error {
 	flag.StringVar(&cfg.Name, "name", "AirPlay Simulator", "discovery name")
 	flag.DurationVar(&cfg.Duration, "duration", 30*time.Second, "simulated media duration")
 	flag.StringVar(&cfg.AdvertiseIP, "mdns-ip", "", "opt into discovery using this LAN IP (also set -listen)")
+	flag.StringVar(&cfg.DiscoveryBackend, "mdns-backend", "auto", "discovery backend: auto, go, native (macOS Bonjour)")
+	flag.BoolVar(&cfg.HidePasswordStatus, "hide-password-status", false, "FairPlay lab: challenge SETUP without advertising password requirement")
 	credentials := flag.String("credentials-out", "", "create a new file with simulator-only pre-paired credentials")
-	flag.StringVar(&cfg.Password, "password", "", "fixed AirPlay password; requires -credentials-out")
+	flag.StringVar(&cfg.Password, "password", "", "fixed AirPlay password; legacy mode requires -credentials-out")
+	flag.StringVar(&cfg.PIN, "pin", "", "four-digit test PIN for native legacy pairing; requires -fairplay")
+	flag.BoolVar(&cfg.FairPlay, "fairplay", false, "enable experimental fp-setup2 receiver and native RTSP control")
 	flag.Parse()
-	if cfg.Password != "" && *credentials == "" {
+	if cfg.FairPlay {
+		cfg.Trace = func(e simulator.ProtocolEvent) { b, _ := json.Marshal(e); log.Print(string(b)) }
+	}
+	if cfg.Password != "" && !cfg.FairPlay && *credentials == "" {
 		return fmt.Errorf("-password requires -credentials-out for the goatv client")
 	}
 	receiver, err := simulator.New(cfg)

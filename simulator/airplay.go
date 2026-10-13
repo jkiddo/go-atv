@@ -12,7 +12,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/textproto"
@@ -21,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hashicorp/mdns"
 	"github.com/jkiddo/go-atv/hap"
 	"golang.org/x/crypto/curve25519"
 	"howett.net/plist"
@@ -56,28 +54,23 @@ func (r *Receiver) TXTRecords() []string {
 	if r.config.Password != "" {
 		pw = "true"
 	}
+	if r.config.FairPlay {
+		return r.fairPlayTXT()
+	}
 	return []string{"deviceid=02:" + r.id[:2] + ":" + r.id[2:4] + ":" + r.id[4:6] + ":" + r.id[6:8] + ":" + r.id[8:10], "model=AppleTV3,2", "features=0x1", "srcvers=220.68", "pw=" + pw, "name=" + r.config.Name}
 }
 
-func (r *Receiver) advertise(ip net.IP) error {
-	iface, err := interfaceForIP(ip)
-	if err != nil {
-		return err
+func (r *Receiver) notify() {
+	if r.config.FairPlay {
+		r.notifyFairPlay()
 	}
-	zone, err := mdns.NewMDNSService(r.config.Name, "_airplay._tcp", "local.", "airplay-sim-"+r.id[:12]+".local.", r.Port(), []net.IP{ip}, r.TXTRecords())
-	if err != nil {
-		return err
-	}
-	server, err := mdns.NewServer(&mdns.Config{Zone: zone, Iface: iface, Logger: log.New(io.Discard, "", 0)})
-	if err == nil {
-		r.shutdownDiscovery = func() { _ = server.Shutdown() }
-	}
-	return err
 }
 
-func (r *Receiver) notify() {} // AirPlay clients poll /playback-info.
-
 func (r *Receiver) serve(conn net.Conn) {
+	if r.config.FairPlay {
+		r.serveFairPlay(conn)
+		return
+	}
 	reader := bufio.NewReader(conn)
 	var verify *legacyVerify
 	for {
@@ -245,12 +238,24 @@ func (r *Receiver) authorized(method, target, authorization string) bool {
 type legacyVerify struct {
 	stream                  cipher.Stream
 	client, server, signing []byte
+	shared                  []byte
 }
 
 func (r *Receiver) startVerify(body []byte) (*legacyVerify, []byte, error) {
 	signing := ed25519.NewKeyFromSeed(r.credentials.LTSK).Public().(ed25519.PublicKey)
-	if subtle.ConstantTimeCompare(signing, body[36:]) != 1 {
+	if !r.config.FairPlay && subtle.ConstantTimeCompare(signing, body[36:]) != 1 {
 		return nil, nil, fmt.Errorf("unknown client")
+	}
+	if r.config.FairPlay && r.config.PIN != "" {
+		r.mu.Lock()
+		known := r.controllers[string(body[36:])]
+		r.mu.Unlock()
+		if !known {
+			return nil, nil, fmt.Errorf("unpaired lab client")
+		}
+	}
+	if r.config.FairPlay {
+		signing = append(ed25519.PublicKey(nil), body[36:]...)
 	}
 	seed := make([]byte, 32)
 	if _, err := rand.Read(seed); err != nil {
@@ -270,8 +275,12 @@ func (r *Receiver) startVerify(body []byte) (*legacyVerify, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	v := &legacyVerify{stream: cipher.NewCTR(block, iv[:16]), client: append([]byte(nil), body[4:36]...), server: server, signing: signing}
-	signature := ed25519.Sign(ed25519.NewKeyFromSeed(seed), append(append([]byte(nil), server...), v.client...))
+	v := &legacyVerify{stream: cipher.NewCTR(block, iv[:16]), client: append([]byte(nil), body[4:36]...), server: server, signing: signing, shared: shared}
+	serverSeed := seed
+	if r.config.FairPlay {
+		serverSeed = r.credentials.LTSK
+	}
+	signature := ed25519.Sign(ed25519.NewKeyFromSeed(serverSeed), append(append([]byte(nil), server...), v.client...))
 	v.stream.XORKeyStream(signature, signature)
 	return v, append(append([]byte(nil), server...), signature...), nil
 }
