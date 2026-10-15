@@ -30,7 +30,7 @@ func newMRPClient(t *testing.T) (*simulator.Receiver, *airplay.Client) {
 }
 func TestMRPPlaybackLifecycle(t *testing.T) {
 	r, c := newMRPClient(t)
-	r.SetNowPlaying(mrp.State{PlaybackState: "playing", App: "com.example.video", AppName: "Video", ItemID: "episode1", Title: "First episode", MediaType: "video", Position: number(12), Duration: number(120), PlaybackRate: number(1)})
+	r.SetNowPlaying(mrp.State{PlaybackState: "playing", App: "com.example.video", AppName: "Video", ItemID: "episode1", Title: "First episode", ContentURL: "https://example.test/episode1.mp4", MediaType: "video", Position: number(12), Duration: number(120), PlaybackRate: number(1)})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	updates := make(chan mrp.State, 20)
@@ -49,7 +49,7 @@ func TestMRPPlaybackLifecycle(t *testing.T) {
 		return mrp.State{}
 	}
 	first := next()
-	if first.Title != "First episode" || first.AppName != "Video" || first.Position == nil || *first.Position != 12 || first.PlaybackState != "playing" {
+	if first.ContentURL != "https://example.test/episode1.mp4" || first.Title != "First episode" || first.AppName != "Video" || first.Position == nil || *first.Position != 12 || first.PlaybackState != "playing" {
 		t.Fatalf("initial: %+v", first)
 	}
 	paused := first
@@ -61,7 +61,7 @@ func TestMRPPlaybackLifecycle(t *testing.T) {
 	}
 	r.Advance(time.Second) // paused time must not advance
 	r.SetNowPlaying(mrp.State{PlaybackState: "playing", App: "com.example.music", AppName: "Music", ItemID: "song1", Title: "A song", Artist: "Artist", Album: "Album", MediaType: "audio", Position: number(0), Duration: number(200), PlaybackRate: number(1)})
-	if s := next(); s.Title != "A song" || s.App != "com.example.music" || s.Artist != "Artist" || s.SeriesName != "" {
+	if s := next(); s.ContentURL != "" || s.Title != "A song" || s.App != "com.example.music" || s.Artist != "Artist" || s.SeriesName != "" {
 		t.Fatalf("app switch: %+v", s)
 	}
 	r.Advance(5 * time.Second)

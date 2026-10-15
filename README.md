@@ -182,6 +182,11 @@ again. Each connection starts with fresh state.
 pointers distinguish missing values from zero. Playback states are `unknown`,
 `idle`, `playing`, `paused`, `stopped`, `interrupted`, and `seeking`. Queue changes
 replace old metadata, while partial item updates preserve unmodified fields.
+`State.ContentURL` exposes the asset URL when the app supplies it; many apps omit
+it. `airplay.WithMediaURLHandler` reports the exact URL submitted by `PlayURL`,
+including the temporary HTTP URL for a local file. Comparing those URLs can help
+a controller identify its active sender; the callback alone is not proof that
+playback succeeded.
 
 For controllers such as Broadster, feed these observations into the existing
 receiver watcher alongside Companion power/availability. Playing, paused, and
@@ -189,8 +194,9 @@ seeking guest media should keep the controller yielding. `unknown`, missing
 metadata, and connection loss are not affirmative idle evidence. Even `idle`
 describes a media session, not whether somebody is browsing the TV UI. Keep the
 controller's existing ownership checks and idle-confirmation policy; an app name
-alone does not identify the controller's own playback. Broadster needs an explicit
-watcher integration and an updated `go-atv` dependency to use this API.
+alone does not identify the controller's own playback. Broadster's `airplay_mrp` build integrates these observations and uses a local
+library checkout through its `pi/build-airplay-mrp.sh` helper until the API is
+available in its pinned public dependency.
 
 ### MRP simulator
 

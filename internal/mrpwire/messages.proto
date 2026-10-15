@@ -89,6 +89,7 @@ message ContentItemMetadata {
   optional int32 seasonNumber = 10;
   optional int32 episodeNumber = 11;
   optional double duration = 14;
+  optional string assetURLString = 32;
   optional double elapsedTime = 35;
   optional string genre = 36;
   optional bool isAlwaysLive = 37;

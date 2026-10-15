@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -310,12 +311,14 @@ func TestPlayURLLoopback(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var submittedURL string
 	var playbackUpdates []map[string]any
 	client := New(
 		"test-client",
 		credentialsPath,
 		"127.0.0.1",
 		WithPort(receiver.port()),
+		WithMediaURLHandler(func(url string) { submittedURL = url }),
 		WithPlaybackInfoHandler(func(info map[string]any) {
 			playbackUpdates = append(playbackUpdates, info)
 		}),
@@ -334,6 +337,9 @@ func TestPlayURLLoopback(t *testing.T) {
 
 	if receiver.playBody == nil {
 		t.Fatal("receiver never saw /play")
+	}
+	if submittedURL != mediaURL {
+		t.Fatalf("submitted URL = %q", submittedURL)
 	}
 	if got := receiver.playBody["Content-Location"]; got != mediaURL {
 		t.Errorf("Content-Location = %v, want %v", got, mediaURL)
@@ -407,5 +413,29 @@ func TestPlaybackInfoRejectsHAPCredentialsForLegacyReceiver(t *testing.T) {
 	_, err := client.PlaybackInfo(ctx)
 	if err == nil || !strings.Contains(err.Error(), "incompatible HAP credentials") {
 		t.Fatalf("PlaybackInfo error = %v, want incompatible credentials", err)
+	}
+}
+
+func TestPlayLocalFileReportsSubmittedURL(t *testing.T) {
+	receiver := newFakeReceiver(t)
+	path := filepath.Join(t.TempDir(), "credentials")
+	if err := hap.SaveCredentials(path, receiver.clientCredentials()); err != nil {
+		t.Fatal(err)
+	}
+	mediaPath := filepath.Join(t.TempDir(), "welcome.mp4")
+	if err := os.WriteFile(mediaPath, []byte("synthetic media"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var submitted string
+	client := New("test-client", path, "127.0.0.1", WithPort(receiver.port()), WithMediaURLHandler(func(url string) { submitted = url }))
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := client.PlayURL(ctx, mediaPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	receiver.mu.Lock()
+	defer receiver.mu.Unlock()
+	if !strings.HasPrefix(submitted, "http://127.0.0.1:") || !strings.HasSuffix(submitted, "/welcome.mp4") || receiver.playBody["Content-Location"] != submitted {
+		t.Fatalf("reported %q, receiver got %v", submitted, receiver.playBody["Content-Location"])
 	}
 }

@@ -44,7 +44,7 @@ func TestPyatvPlaybackFixtures(t *testing.T) {
 					t.Fatalf("removed app: %+v", s)
 				}
 			case "select_client":
-				if s.Title != "Episode two" || s.ItemID != "episode2" || s.Position == nil || *s.Position != 42 || s.EpisodeNumber == nil || *s.EpisodeNumber != 2 || s.PlaybackState != "playing" {
+				if s.ContentURL != "https://example.test/episode2.mp4" || s.Title != "Episode two" || s.ItemID != "episode2" || s.Position == nil || *s.Position != 42 || s.EpisodeNumber == nil || *s.EpisodeNumber != 2 || s.PlaybackState != "playing" {
 					t.Fatalf("initial: %+v", s)
 				}
 			case "partial_metadata":
@@ -56,7 +56,7 @@ func TestPyatvPlaybackFixtures(t *testing.T) {
 					t.Fatalf("paused/background: %+v", s)
 				}
 			case "switch_app":
-				if s.Title != "A song" || s.Artist != "An artist" || s.SeriesName != "" || s.Duration != nil || s.MediaType != "audio" {
+				if s.ContentURL != "" || s.Title != "A song" || s.Artist != "An artist" || s.SeriesName != "" || s.Duration != nil || s.MediaType != "audio" {
 					t.Fatalf("switch: %+v", s)
 				}
 			case "remove_player", "unknown_message":

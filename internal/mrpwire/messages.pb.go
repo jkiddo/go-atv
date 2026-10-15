@@ -916,6 +916,7 @@ type ContentItemMetadata struct {
 	SeasonNumber         *int32                 `protobuf:"varint,10,opt,name=seasonNumber" json:"seasonNumber,omitempty"`
 	EpisodeNumber        *int32                 `protobuf:"varint,11,opt,name=episodeNumber" json:"episodeNumber,omitempty"`
 	Duration             *float64               `protobuf:"fixed64,14,opt,name=duration" json:"duration,omitempty"`
+	AssetURLString       *string                `protobuf:"bytes,32,opt,name=assetURLString" json:"assetURLString,omitempty"`
 	ElapsedTime          *float64               `protobuf:"fixed64,35,opt,name=elapsedTime" json:"elapsedTime,omitempty"`
 	Genre                *string                `protobuf:"bytes,36,opt,name=genre" json:"genre,omitempty"`
 	IsAlwaysLive         *bool                  `protobuf:"varint,37,opt,name=isAlwaysLive" json:"isAlwaysLive,omitempty"`
@@ -1005,6 +1006,13 @@ func (x *ContentItemMetadata) GetDuration() float64 {
 		return *x.Duration
 	}
 	return 0
+}
+
+func (x *ContentItemMetadata) GetAssetURLString() string {
+	if x != nil && x.AssetURLString != nil {
+		return *x.AssetURLString
+	}
+	return ""
 }
 
 func (x *ContentItemMetadata) GetElapsedTime() float64 {
@@ -1201,7 +1209,7 @@ const file_messages_proto_rawDesc = "" +
 	"\n" +
 	"identifier\x18\x01 \x01(\tR\n" +
 	"identifier\x12:\n" +
-	"\bmetadata\x18\x02 \x01(\v2\x1e.goatv.mrp.ContentItemMetadataR\bmetadata\"\x95\x04\n" +
+	"\bmetadata\x18\x02 \x01(\v2\x1e.goatv.mrp.ContentItemMetadataR\bmetadata\"\xbd\x04\n" +
 	"\x13ContentItemMetadata\x12\x14\n" +
 	"\x05title\x18\x01 \x01(\tR\x05title\x12\x1a\n" +
 	"\bsubtitle\x18\x02 \x01(\tR\bsubtitle\x12\x1c\n" +
@@ -1210,7 +1218,8 @@ const file_messages_proto_rawDesc = "" +
 	"\fseasonNumber\x18\n" +
 	" \x01(\x05R\fseasonNumber\x12$\n" +
 	"\repisodeNumber\x18\v \x01(\x05R\repisodeNumber\x12\x1a\n" +
-	"\bduration\x18\x0e \x01(\x01R\bduration\x12 \n" +
+	"\bduration\x18\x0e \x01(\x01R\bduration\x12&\n" +
+	"\x0eassetURLString\x18  \x01(\tR\x0eassetURLString\x12 \n" +
 	"\velapsedTime\x18# \x01(\x01R\velapsedTime\x12\x14\n" +
 	"\x05genre\x18$ \x01(\tR\x05genre\x12\"\n" +
 	"\fisAlwaysLive\x18% \x01(\bR\fisAlwaysLive\x12\"\n" +

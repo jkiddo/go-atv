@@ -31,6 +31,7 @@ def initial(s):
     item = s.playbackQueue.contentItems.add(identifier="episode2")
     m = item.metadata
     m.title = "Episode two"
+    m.assetURLString = "https://example.test/episode2.mp4"
     m.seriesName = "A series"
     m.seasonNumber = 1
     m.episodeNumber = 2

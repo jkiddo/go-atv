@@ -477,7 +477,7 @@ func (p *mrpPeer) sendState(channel *pb.Channel) error {
 	}
 	queue := &pb.PlaybackQueue{Location: proto.Int32(0)}
 	if s.ItemID != "" || s.Title != "" {
-		meta := &pb.ContentItemMetadata{Title: proto.String(s.Title), TrackArtistName: proto.String(s.Artist), AlbumName: proto.String(s.Album), Genre: proto.String(s.Genre), SeriesName: proto.String(s.SeriesName), SeasonNumber: s.SeasonNumber, EpisodeNumber: s.EpisodeNumber, Duration: s.Duration, ElapsedTime: s.Position, IsAlwaysLive: proto.Bool(s.Live)}
+		meta := &pb.ContentItemMetadata{AssetURLString: proto.String(s.ContentURL), Title: proto.String(s.Title), TrackArtistName: proto.String(s.Artist), AlbumName: proto.String(s.Album), Genre: proto.String(s.Genre), SeriesName: proto.String(s.SeriesName), SeasonNumber: s.SeasonNumber, EpisodeNumber: s.EpisodeNumber, Duration: s.Duration, ElapsedTime: s.Position, IsAlwaysLive: proto.Bool(s.Live)}
 		if s.PlaybackRate != nil {
 			meta.PlaybackRate = proto.Float32(float32(*s.PlaybackRate))
 		}

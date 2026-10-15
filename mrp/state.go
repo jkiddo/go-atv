@@ -20,6 +20,7 @@ type State struct {
 	AppName           string     `json:"appName,omitempty"`
 	PlayerID          string     `json:"playerId,omitempty"`
 	ItemID            string     `json:"itemId,omitempty"`
+	ContentURL        string     `json:"contentUrl,omitempty"`
 	Title             string     `json:"title,omitempty"`
 	Artist            string     `json:"artist,omitempty"`
 	Album             string     `json:"album,omitempty"`
@@ -202,6 +203,7 @@ func (t *tracker) snapshot() State {
 	item := items[loc]
 	m := item.GetMetadata()
 	s.ItemID = item.GetIdentifier()
+	s.ContentURL = m.GetAssetURLString()
 	s.Title = m.GetTitle()
 	s.Artist = m.GetTrackArtistName()
 	s.Album = m.GetAlbumName()

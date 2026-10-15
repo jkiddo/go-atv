@@ -32,6 +32,7 @@ type Client struct {
 	authMode          string
 	fairPlayControl   bool
 	deviceID          string
+	mediaURLHandler   func(string)
 	playbackHandler   func(map[string]any)
 	diagnosticHandler func(DiagnosticEvent)
 
@@ -73,6 +74,13 @@ func WithProperties(properties map[string]string) Option {
 // must return quickly.
 func WithPlaybackInfoHandler(handler func(map[string]any)) Option {
 	return func(c *Client) { c.playbackHandler = handler }
+}
+
+// WithMediaURLHandler observes the exact URL submitted by PlayURL, including
+// temporary URLs for local files. The synchronous callback runs after URL
+// resolution and before sending; it does not indicate successful playback.
+func WithMediaURLHandler(handler func(string)) Option {
+	return func(c *Client) { c.mediaURLHandler = handler }
 }
 
 // WithAuthMode overrides how the client authenticates against the receiver.
@@ -305,6 +313,9 @@ func (c *Client) PlayURL(ctx context.Context, mediaURL string, position float64)
 		mediaURL = served
 	}
 
+	if c.mediaURLHandler != nil {
+		c.mediaURLHandler(mediaURL)
+	}
 	conn, err := dial(ctx, c.address, c.port)
 	if err != nil {
 		return err
