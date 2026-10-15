@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -288,5 +289,21 @@ func TestPlayURLPrimesLegacyDigestOnOwningConnection(t *testing.T) {
 	}
 	if !isSessionID(loadLegacySessionID(path + ".session")) {
 		t.Fatal("accepted playback session was not persisted")
+	}
+}
+
+func TestIsConnectionClosed(t *testing.T) {
+	for _, err := range []error{
+		io.EOF,
+		io.ErrClosedPipe,
+		net.ErrClosed,
+		fmt.Errorf("receive: %w", syscall.ECONNRESET),
+	} {
+		if !isConnectionClosed(err) {
+			t.Errorf("isConnectionClosed(%v) = false", err)
+		}
+	}
+	if isConnectionClosed(context.DeadlineExceeded) {
+		t.Fatal("deadline exceeded must not be treated as a closed connection")
 	}
 }

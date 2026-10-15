@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jkiddo/go-atv/hap"
@@ -24,6 +25,13 @@ const (
 	playbackWaitRetries = 5
 	feedbackInterval    = 2 * time.Second
 )
+
+func isConnectionClosed(err error) bool {
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrClosedPipe) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.ECONNRESET)
+}
 
 // playHeaders are the extra headers sent with POST /play (pyatv airplayv2.py
 // HEADERS; the session id is added per call).
@@ -404,9 +412,9 @@ func waitForPlaybackToEnd(ctx context.Context, rtsp *rtspSession) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			// An orderly close can mean the remote stopped the video.
+			// A close can mean the remote stopped the video.
 			// Timeouts and protocol errors must remain failures.
-			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, net.ErrClosed) {
+			if isConnectionClosed(err) {
 				return nil
 			}
 			return err

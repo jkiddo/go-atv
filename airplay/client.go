@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -470,7 +469,7 @@ func (c *Client) PlaybackInfo(ctx context.Context) (map[string]any, error) {
 		// Legacy Apple TVs close a standalone authenticated status connection
 		// when no playback session exists. pyatv likewise treats a lost
 		// playback-info connection as playback having stopped.
-		if legacy && errors.Is(err, io.EOF) {
+		if legacy && isConnectionClosed(err) {
 			return map[string]any{}, nil
 		}
 		return nil, err
