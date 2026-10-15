@@ -6,6 +6,7 @@ require (
 	github.com/hashicorp/mdns v1.0.7
 	github.com/miekg/dns v1.1.72
 	golang.org/x/crypto v0.46.0
+	google.golang.org/protobuf v1.36.11
 	howett.net/plist v1.0.1
 )
 

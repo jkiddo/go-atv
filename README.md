@@ -3,7 +3,8 @@
 [![CI](https://github.com/jkiddo/go-atv/actions/workflows/ci.yml/badge.svg)](https://github.com/jkiddo/go-atv/actions/workflows/ci.yml)
 
 A Go library and CLI for pairing with and controlling an Apple TV over
-Apple's **Companion Link** protocol. The protocol implementation is a port
+Apple's **Companion Link** protocol, with AirPlay playback and **MRP now-playing
+tracking**. The protocol implementation is a port
 of the relevant parts of [pyatv](https://github.com/postlund/pyatv).
 
 ## What it does
@@ -14,6 +15,9 @@ of the relevant parts of [pyatv](https://github.com/postlund/pyatv).
   interchangeable with pyatv's `atvremote --credentials`.
 - **Encrypted sessions** — HAP pair-verify (x25519 + Ed25519) and
   ChaCha20-Poly1305 frame encryption.
+- **Now-playing tracking** — MRP over an encrypted AirPlay 2 data channel
+  reports the playing app, title, artist, album, series/episode metadata,
+  playback state, duration and position, with pushed updates (tvOS 15+).
 - **Power state tracking** — initial `FetchAttentionState` plus pushed
   `SystemStatus`/`TVSystemStatus` events (awake / asleep / screensaver), with
   change callbacks.
@@ -28,9 +32,11 @@ of the relevant parts of [pyatv](https://github.com/postlund/pyatv).
 
 ## What it deliberately does not do
 
-- **Frontmost/current app tracking.** The Companion protocol does not expose
-  the currently running app; that requires the Media Remote Protocol (MRP)
-  tunneled over AirPlay on tvOS 15+, which is out of scope for this port.
+- **Guaranteed foreground app tracking.** MRP identifies the app responsible for
+  the active media session, which need not be the foreground app. Metadata
+  availability depends on what that app publishes.
+- **Direct legacy MRP connections.** Playback tracking currently uses the AirPlay 2
+  tunnel; standalone `_mediaremotetv._tcp` pairing/transport is not implemented.
 - Touch gestures, text input, media-control commands.
 - **Audio (RAOP) streaming and screen mirroring.** Only video-by-URL is
   implemented; raw audio streaming and mirroring are out of scope.
@@ -137,6 +143,93 @@ player.FinishPairing(ctx, "1234")
 player.PlayURL(ctx, "https://example.com/video.mp4", 0)
 ```
 
+## Now-playing tracking
+
+Pair with AirPlay first; Companion credentials are separate:
+
+```sh
+./goatv pair-airplay -host 192.168.1.50
+./goatv now-playing -host 192.168.1.50
+./goatv watch-playing -host 192.168.1.50
+```
+
+`now-playing` prints one JSON snapshot after the MRP subscription handshake.
+`watch-playing` streams changed snapshots as JSON lines until interrupted.
+Use `-name` for discovery, `-airplay-credentials` for a custom credential file,
+and `-airplay-port` for a custom port with `-host`.
+These commands observe existing media; they do not start playback.
+
+```go
+client := airplay.New("My observer", credentialsPath, address,
+    airplay.WithPort(7000))
+err := client.WatchNowPlaying(ctx, func(state mrp.State) {
+    fmt.Printf("%s: %s (%s)\n", state.AppName, state.Title, state.PlaybackState)
+    if position := state.PositionAt(time.Now()); position != nil {
+        fmt.Printf("position: %.1fs\n", *position)
+    }
+})
+```
+
+Import `github.com/jkiddo/go-atv/mrp` alongside `airplay`. The callback runs
+synchronously and must return quickly; hand observations to a queue if further
+processing might block. Use a separate client for concurrent playback operations.
+Cancellation closes the control, event and data sockets. Connection/protocol
+errors are returned; callers can reconnect with backoff by calling the method
+again. Each connection starts with fresh state.
+
+`State.Position` is the reported position, with its reference time in
+`PositionTimestamp`; `PositionAt` extrapolates while playing/seeking. Numeric
+pointers distinguish missing values from zero. Playback states are `unknown`,
+`idle`, `playing`, `paused`, `stopped`, `interrupted`, and `seeking`. Queue changes
+replace old metadata, while partial item updates preserve unmodified fields.
+
+For controllers such as Broadster, feed these observations into the existing
+receiver watcher alongside Companion power/availability. Playing, paused, and
+seeking guest media should keep the controller yielding. `unknown`, missing
+metadata, and connection loss are not affirmative idle evidence. Even `idle`
+describes a media session, not whether somebody is browsing the TV UI. Keep the
+controller's existing ownership checks and idle-confirmation policy; an app name
+alone does not identify the controller's own playback. Broadster needs an explicit
+watcher integration and an updated `go-atv` dependency to use this API.
+
+### MRP simulator
+
+The modern simulator mode verifies HAP credentials and implements the encrypted
+control, event and MRP data channels. It is separate from legacy/FairPlay mode and
+uses generated, simulator-only credentials; interactive HAP pair-setup is not
+implemented. It never fetches or decodes media.
+
+```sh
+# Terminal 1: credential output must name a file that does not already exist.
+go run ./cmd/simulator -mrp -listen 127.0.0.1:17000 \
+  -credentials-out /tmp/goatv-mrp-credentials -duration 2m \
+  -title "Demo episode" -app com.example.video
+
+# Terminal 2:
+go run ./cmd/goatv watch-playing -host 127.0.0.1 -airplay-port 17000 \
+  -airplay-credentials /tmp/goatv-mrp-credentials
+```
+
+In tests, use `simulator.Config{MRP: true}` and `Receiver.Credentials()`.
+`SetNowPlaying(mrp.State)` replaces the active session and pushes updates;
+`Advance`, `Finish`, and `Disconnect` exercise progress, completion and recovery.
+
+Verification includes pyatv-generated protobuf/data-frame fixtures, fragmented
+and malformed frames, HAP tamper rejection, partial metadata/app/player state,
+and encrypted simulator lifecycle tests. The independent pyatv integration test
+is opt-in so ordinary Go tests need no Python installation:
+
+```sh
+PYATV_PYTHON=/path/to/venv/bin/python go test -race ./simulator -run TestMRPPyatvInterop -v
+```
+
+Reference implementation: [pyatv](https://github.com/postlund/pyatv/tree/b277a4c8222ecdcbaab8a24e3e713ca44765adb4),
+with its MIT notice in `internal/mrpwire/LICENSE.pyatv`. The `.proto` source and
+fixture generator are checked in under `internal/mrpwire`; generated Go sources
+are committed, so normal builds do not require `protoc`. Simulator and pyatv
+verification do not establish compatibility with every app/tvOS release; physical
+Apple TV verification remains separate.
+
 ## Package layout
 
 | Package     | Contents |
@@ -145,7 +238,8 @@ player.PlayURL(ctx, "https://example.com/video.mp4", 0)
 | `tlv8`      | HAP TLV8 encoding |
 | `hap`       | SRP-6a client, HKDF, ChaCha20-Poly1305 layer, HAP session framing, credentials |
 | `companion` | Frames, encrypted session, pair-setup/verify, client, discovery |
-| `airplay`   | AirPlay streaming: HTTP/RTSP connection, pair-setup/verify (HAP + transient), event channel, timing server, player (port of pyatv `play_url`) |
+| `mrp`       | Now-playing snapshots, per-app/player state, partial metadata updates |
+| `airplay`   | AirPlay streaming: HTTP/RTSP connection, pair-setup/verify (HAP + transient), event channel, timing server, player (port of pyatv `play_url`), MRP data tunnel |
 | `cmd/goatv` | CLI |
 
 ## Fidelity & testing

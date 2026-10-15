@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jkiddo/go-atv/hap"
+	"github.com/jkiddo/go-atv/mrp"
 )
 
 // FairPlayAppleTV32_12H1006 reproduces the AppleTV3,2 receiver tested on
@@ -22,6 +23,10 @@ const FairPlayAppleTV32_12H1006 = "appletv3,2-12H1006"
 // Config configures an isolated receiver. The zero value listens on loopback
 // with an ephemeral port, has a 30-second media duration and disables mDNS.
 type Config struct {
+	// MRP enables the modern HAP/AirPlay 2 now-playing receiver. Use Credentials
+	// for pre-paired test clients; this mode does not fetch or play media.
+	MRP bool
+
 	Listen   string
 	Name     string
 	Duration time.Duration
@@ -59,6 +64,10 @@ type State struct {
 }
 
 type Receiver struct {
+	mrpState   mrp.State
+	mrpPeers   map[*mrpPeer]struct{}
+	mrpSigning []byte
+
 	id                     string
 	mu                     sync.Mutex
 	config                 Config
@@ -84,6 +93,9 @@ type Receiver struct {
 
 // New starts a receiver. Close it after use. Discovery is opt-in.
 func New(config Config) (*Receiver, error) {
+	if config.MRP && (config.FairPlay || config.Password != "" || config.PIN != "") {
+		return nil, errors.New("MRP mode cannot be combined with legacy FairPlay, PIN or password")
+	}
 	if config.FairPlayProfile != "" && (!config.FairPlay || config.FairPlayProfile != FairPlayAppleTV32_12H1006) {
 		return nil, errors.New("FairPlayProfile requires FairPlay and a supported hardware profile")
 	}
@@ -157,6 +169,10 @@ func (r *Receiver) FailNextPlay() { r.mu.Lock(); r.failNext = true; r.mu.Unlock(
 // Advance moves the simulated playback clock. It is safe to call concurrently.
 // Paused/idle playback does not advance. Cast single-item repeat loops in place.
 func (r *Receiver) Advance(elapsed time.Duration) {
+	if r.config.MRP {
+		r.advanceMRP(elapsed)
+		return
+	}
 	r.mu.Lock()
 	changed := false
 	if elapsed > 0 && r.state.PlayerState == "PLAYING" {
@@ -181,6 +197,10 @@ func (r *Receiver) Advance(elapsed time.Duration) {
 
 // Finish ends the current item immediately, ignoring repeat mode.
 func (r *Receiver) Finish() {
+	if r.config.MRP {
+		r.finishMRP()
+		return
+	}
 	r.mu.Lock()
 	r.state.Position = r.state.Duration
 	r.state.PlayerState = "IDLE"

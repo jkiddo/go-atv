@@ -1,0 +1,104 @@
+// Wire-compatible playback subset of pyatv's MRP protobuf definitions.
+// Source: postlund/pyatv b277a4c8222ecdcbaab8a24e3e713ca44765adb4.
+// See LICENSE.pyatv. Unknown fields are retained by the protobuf runtime.
+syntax = "proto2";
+package goatv.mrp;
+option go_package = "github.com/jkiddo/go-atv/internal/mrpwire";
+
+// pyatv models payloads as proto2 extensions. Ordinary message fields with
+// the same numbers have the identical wire encoding.
+message ProtocolMessage {
+  optional uint32 type = 1;
+  optional string identifier = 2;
+  optional uint32 errorCode = 4;
+  optional SetStateMessage setState = 9;
+  optional DeviceInfoMessage deviceInfo = 20;
+  optional ClientUpdatesConfigMessage clientUpdatesConfig = 21;
+  optional SetConnectionStateMessage connectionState = 42;
+  optional ClientMessage nowPlayingClient = 50;
+  optional PlayerMessage nowPlayingPlayer = 51;
+  optional ClientMessage removeClient = 57;
+  optional PlayerMessage removePlayer = 58;
+  optional ClientMessage updateClient = 59;
+  optional UpdateContentItemMessage updateContentItem = 60;
+  optional string errorDescription = 78;
+  optional string uniqueIdentifier = 85;
+}
+message DeviceInfoMessage {
+  optional string uniqueIdentifier = 1;
+  required string name = 2;
+  optional string localizedModelName = 3;
+  optional string systemBuildVersion = 4;
+  optional string applicationBundleIdentifier = 5;
+  optional string applicationBundleVersion = 6;
+  optional int32 protocolVersion = 7;
+  optional uint32 lastSupportedMessageType = 8;
+  optional bool supportsSystemPairing = 9;
+  optional bool allowsPairing = 10;
+  optional string systemMediaApplication = 12;
+  optional bool supportsACL = 13;
+  optional bool supportsSharedQueue = 14;
+  optional bool supportsExtendedMotion = 15;
+  optional uint32 sharedQueueVersion = 17;
+  optional uint32 deviceClass = 21;
+  optional uint32 logicalDeviceCount = 22;
+}
+message ClientUpdatesConfigMessage {
+  optional bool artworkUpdates = 1;
+  optional bool nowPlayingUpdates = 2;
+  optional bool volumeUpdates = 3;
+  optional bool keyboardUpdates = 4;
+  optional bool outputDeviceUpdates = 5;
+}
+message SetConnectionStateMessage { optional uint32 state = 1; }
+message ClientMessage { optional NowPlayingClient client = 1; }
+message PlayerMessage { optional PlayerPath playerPath = 1; }
+message NowPlayingClient {
+  optional int32 processIdentifier = 1;
+  optional string bundleIdentifier = 2;
+  optional string displayName = 7;
+}
+message NowPlayingPlayer {
+  optional string identifier = 1;
+  optional string displayName = 2;
+  optional bool isDefaultPlayer = 3;
+}
+message PlayerPath {
+  optional NowPlayingClient client = 2;
+  optional NowPlayingPlayer player = 3;
+}
+message SetStateMessage {
+  optional PlaybackQueue playbackQueue = 3;
+  optional uint32 playbackState = 6;
+  optional PlayerPath playerPath = 9;
+  optional double playbackStateTimestamp = 11;
+}
+message PlaybackQueue {
+  optional int32 location = 1;
+  repeated ContentItem contentItems = 2;
+}
+message ContentItem {
+  optional string identifier = 1;
+  optional ContentItemMetadata metadata = 2;
+}
+message ContentItemMetadata {
+  optional string title = 1;
+  optional string subtitle = 2;
+  optional string albumName = 6;
+  optional string trackArtistName = 7;
+  optional int32 seasonNumber = 10;
+  optional int32 episodeNumber = 11;
+  optional double duration = 14;
+  optional double elapsedTime = 35;
+  optional string genre = 36;
+  optional bool isAlwaysLive = 37;
+  optional float playbackRate = 39;
+  optional string contentIdentifier = 44;
+  optional string seriesName = 63;
+  optional uint32 mediaType = 64;
+  optional double elapsedTimeTimestamp = 74;
+}
+message UpdateContentItemMessage {
+  repeated ContentItem contentItems = 1;
+  optional PlayerPath playerPath = 2;
+}

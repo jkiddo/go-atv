@@ -15,6 +15,7 @@ import (
 // answer every request with 200 OK to keep the session alive (pyatv's
 // EventChannel).
 type eventChannel struct {
+	done    chan struct{}
 	conn    net.Conn
 	session *hap.Session
 }
@@ -48,18 +49,20 @@ func connectEventChannel(ctx context.Context, address string, port int, v *verif
 		}
 	}
 
-	channel := &eventChannel{conn: conn, session: session}
+	channel := &eventChannel{conn: conn, session: session, done: make(chan struct{})}
 	go channel.serve()
 	return channel, nil
 }
 
 func (e *eventChannel) close() {
 	e.conn.Close()
+	<-e.done
 }
 
 // serve answers every incoming request with 200 OK until the connection is
 // closed by either side.
 func (e *eventChannel) serve() {
+	defer close(e.done)
 	var pending []byte
 	buf := make([]byte, 4096)
 	for {

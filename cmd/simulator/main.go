@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/jkiddo/go-atv/mrp"
 	"github.com/jkiddo/go-atv/simulator"
 	"log"
 	"os"
@@ -33,6 +34,9 @@ func run() error {
 	flag.StringVar(&cfg.PIN, "pin", "", "four-digit test PIN for native legacy pairing; requires -fairplay")
 	flag.BoolVar(&cfg.FairPlay, "fairplay", false, "enable experimental fp-setup2 receiver and native RTSP control")
 	flag.StringVar(&cfg.FairPlayProfile, "fairplay-profile", "", "hardware profile: appletv3,2-12H1006 (requires -fairplay)")
+	flag.BoolVar(&cfg.MRP, "mrp", false, "enable modern AirPlay 2 MRP receiver (use -credentials-out)")
+	title := flag.String("title", "Simulator video", "initial MRP media title")
+	app := flag.String("app", "com.example.simulator", "initial MRP app bundle ID")
 	flag.Parse()
 	if cfg.FairPlay {
 		cfg.Trace = func(e simulator.ProtocolEvent) { b, _ := json.Marshal(e); log.Print(string(b)) }
@@ -45,6 +49,11 @@ func run() error {
 		return err
 	}
 	defer receiver.Close()
+	if cfg.MRP {
+		position, rate, duration := 0.0, 1.0, cfg.Duration.Seconds()
+		now := time.Now().UTC()
+		receiver.SetNowPlaying(mrp.State{PlaybackState: "playing", App: *app, AppName: "Simulator", ItemID: "demo", Title: *title, MediaType: "video", Duration: &duration, Position: &position, PlaybackRate: &rate, PositionTimestamp: &now})
+	}
 	if *credentials != "" {
 		f, err := os.OpenFile(*credentials, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {

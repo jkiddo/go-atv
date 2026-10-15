@@ -18,6 +18,7 @@ import (
 
 	"github.com/jkiddo/go-atv/airplay"
 	"github.com/jkiddo/go-atv/companion"
+	"github.com/jkiddo/go-atv/mrp"
 )
 
 func main() {
@@ -41,9 +42,12 @@ Commands:
   launch <bundle-id>       Launch an app
   pair-airplay             Pair for AirPlay streaming (PIN shown on the TV)
   play <url|file>          Stream a video URL or local file via AirPlay
+  now-playing              Print MRP playback metadata as JSON
+  watch-playing            Stream MRP playback changes as JSON lines
 
 Flags (for all commands except scan):
   -host <ip>               Device address (skips discovery)
+  -airplay-port <port>      AirPlay port when using -host (default 7000)
   -name <device name>      Device name to match during discovery
   -credentials <file>      Credentials file (default ~/.goatv/credentials)
   -airplay-credentials <file>
@@ -64,6 +68,7 @@ func run() error {
 
 	flags := flag.NewFlagSet(command, flag.ExitOnError)
 	host := flags.String("host", "", "device address")
+	airplayPort := flags.Int("airplay-port", 7000, "AirPlay port when using -host")
 	deviceName := flags.String("name", "", "device name to match during discovery")
 	credentials := flags.String("credentials", defaultCredentialsPath(), "credentials file")
 	airplayCredentials := flags.String("airplay-credentials", defaultCredentialsPath()+"-airplay", "AirPlay credentials file")
@@ -82,10 +87,13 @@ func run() error {
 		return scan(ctx, *timeout)
 	}
 
-	if command == "pair-airplay" || command == "play" {
-		client, err := airplayClient(ctx, *host, *deviceName, *clientName, *airplayCredentials, *timeout, airplay.WithFairPlayControl(*fairPlay))
+	if command == "pair-airplay" || command == "play" || command == "now-playing" || command == "watch-playing" {
+		client, err := airplayClient(ctx, *host, *deviceName, *clientName, *airplayCredentials, *timeout, airplay.WithFairPlayControl(*fairPlay), airplay.WithPort(*airplayPort))
 		if err != nil {
 			return err
+		}
+		if command == "now-playing" || command == "watch-playing" {
+			return watchPlaying(ctx, client, command == "now-playing")
 		}
 		if command == "pair-airplay" {
 			return pairAirPlay(ctx, client)
@@ -471,4 +479,25 @@ func apps(ctx context.Context, client *companion.Client) error {
 		}
 		return nil
 	})
+}
+
+// watchPlaying keeps JSON output separate from pairing and diagnostics.
+func watchPlaying(ctx context.Context, client *airplay.Client, once bool) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var outputErr error
+	encoder := json.NewEncoder(os.Stdout)
+	err := client.WatchNowPlaying(ctx, func(state mrp.State) {
+		outputErr = encoder.Encode(state)
+		if once || outputErr != nil {
+			cancel()
+		}
+	})
+	if outputErr != nil {
+		return outputErr
+	}
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }

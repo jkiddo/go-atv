@@ -38,18 +38,25 @@ func (r *Receiver) listen() error {
 		return err
 	}
 	r.nonce = hex.EncodeToString(nonce)
+	if r.config.MRP {
+		r.initMRP()
+	}
 	var err error
 	r.listener, err = net.Listen("tcp", r.config.Listen)
 	return err
 }
 
 // Credentials returns pre-paired, simulator-only credentials. This receiver
-// validates legacy pair-verify; interactive PIN setup is not implemented.
+// validates HAP pair-verify in MRP mode and legacy pair-verify otherwise.
+// Interactive HAP pair-setup is not implemented.
 func (r *Receiver) Credentials() hap.Credentials {
-	return hap.Credentials{ClientID: append([]byte(nil), r.credentials.ClientID...), LTSK: append([]byte(nil), r.credentials.LTSK...)}
+	return hap.Credentials{ClientID: append([]byte(nil), r.credentials.ClientID...), LTSK: append([]byte(nil), r.credentials.LTSK...), LTPK: append([]byte(nil), r.credentials.LTPK...), ATVID: append([]byte(nil), r.credentials.ATVID...)}
 }
 
 func (r *Receiver) TXTRecords() []string {
+	if r.config.MRP {
+		return []string{"deviceid=02:00:00:00:00:01", "model=AppleTV14,1", "features=0x0,0x40", "osvers=17.0", "srcvers=690.7.1", "flags=0x0", "name=" + r.config.Name}
+	}
 	pw := "false"
 	if r.config.Password != "" {
 		pw = "true"
@@ -67,6 +74,10 @@ func (r *Receiver) notify() {
 }
 
 func (r *Receiver) serve(conn net.Conn) {
+	if r.config.MRP {
+		r.serveMRPControl(conn)
+		return
+	}
 	if r.config.FairPlay {
 		r.serveFairPlay(conn)
 		return
