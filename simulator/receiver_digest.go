@@ -16,8 +16,8 @@ const (
 )
 
 // receiverDigestAuth implements the RFC 2069 Digest authentication profile
-// used by AirPlay receivers. A receiver keeps one instance for its lifetime so
-// the challenge remains stable across the initial 401 and later requests.
+// used by AirPlay receivers. An instance keeps its challenge stable across the
+// initial 401 and later requests. FairPlay uses one instance per connection.
 type receiverDigestAuth struct {
 	password string
 	realm    string

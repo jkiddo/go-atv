@@ -14,6 +14,11 @@ import (
 	"github.com/jkiddo/go-atv/hap"
 )
 
+// FairPlayAppleTV32_12H1006 reproduces the AppleTV3,2 receiver tested on
+// 2026-10-14: OS build 12H1006, AirPlay 220.68. After /play it closes the
+// RTSP parent while the independent encrypted video session keeps playing.
+const FairPlayAppleTV32_12H1006 = "appletv3,2-12H1006"
+
 // Config configures an isolated receiver. The zero value listens on loopback
 // with an ephemeral port, has a 30-second media duration and disables mDNS.
 type Config struct {
@@ -26,6 +31,7 @@ type Config struct {
 	HidePasswordStatus bool   // FairPlay lab: challenge SETUP even when TXT omits password requirement
 	Password           string
 	PIN                string              // explicit, simulator-only legacy pairing PIN
+	FairPlayProfile    string              // empty keeps the strict lab parent lifecycle
 	FairPlay           bool                // opt-in native sender interoperability lab
 	Trace              func(ProtocolEvent) // metadata only; never emits keys or bodies
 }
@@ -48,6 +54,7 @@ type State struct {
 	TimingReplies     int     `json:"timingReplies"`
 	TimingErrors      int     `json:"timingErrors"`
 	DigestChallenges  int     `json:"digestChallenges"`
+	DetachedParents   int     `json:"detachedParents"`
 	FairPlaySetups    int     `json:"fairPlaySetups"`
 }
 
@@ -72,10 +79,14 @@ type Receiver struct {
 	reversePeers           map[*reversePeer]struct{}
 	fairPlayParents        map[string]net.Conn
 	fairPlayPlaybackParent net.Conn
+	fairPlayPlaybackVideo  net.Conn
 }
 
 // New starts a receiver. Close it after use. Discovery is opt-in.
 func New(config Config) (*Receiver, error) {
+	if config.FairPlayProfile != "" && (!config.FairPlay || config.FairPlayProfile != FairPlayAppleTV32_12H1006) {
+		return nil, errors.New("FairPlayProfile requires FairPlay and a supported hardware profile")
+	}
 	if config.DiscoveryBackend != "" && config.DiscoveryBackend != "auto" && config.DiscoveryBackend != "go" && config.DiscoveryBackend != "native" {
 		return nil, errors.New("unknown discovery backend")
 	}

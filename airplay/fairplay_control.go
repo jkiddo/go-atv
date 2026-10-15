@@ -16,6 +16,7 @@ import (
 	"golang.org/x/crypto/curve25519"
 	"io"
 	"net"
+	"syscall"
 	"time"
 )
 
@@ -209,7 +210,11 @@ func (c *Client) playURLFairPlay(ctx context.Context, parent *rtspSession, crede
 	if e != nil {
 		return e
 	}
+	parentActive := true
 	defer func() {
+		if !parentActive {
+			return
+		}
 		cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		parent.exchange(cleanup, "TEARDOWN", "", nil, map[string]any{})
@@ -237,12 +242,12 @@ func (c *Client) playURLFairPlay(ctx context.Context, parent *rtspSession, crede
 		return e
 	}
 	headers := []header{{"X-Apple-Session-ID", sessionID}, {"X-Apple-ET", "32"}}
-	video, e := c.fairPlayVideoConnection(ctx, *credentials, peerKey, headers, true)
+	video, receiverInfo, e := c.fairPlayVideoConnection(ctx, *credentials, peerKey, headers, true)
 	if e != nil {
 		return e
 	}
 	defer video.close()
-	reverse, e := c.fairPlayVideoConnection(ctx, *credentials, peerKey, headers, false)
+	reverse, _, e := c.fairPlayVideoConnection(ctx, *credentials, peerKey, headers, false)
 	if e != nil {
 		return e
 	}
@@ -281,7 +286,7 @@ func (c *Client) playURLFairPlay(ctx context.Context, parent *rtspSession, crede
 		if err != nil {
 			// An interrupted GCM record invalidates that transport. Cleanup
 			// uses fresh verification/SAP/keys, retaining only the session ID.
-			fresh, e := c.fairPlayVideoConnection(cleanup, *credentials, peerKey, headers, false)
+			fresh, _, e := c.fairPlayVideoConnection(cleanup, *credentials, peerKey, headers, false)
 			if e != nil {
 				return
 			}
@@ -378,9 +383,17 @@ func (c *Client) playURLFairPlay(ctx context.Context, parent *rtspSession, crede
 				return errors.New("airplay: receiver never reported playback")
 			}
 		}
-		if time.Since(lastFeedback) >= feedbackInterval {
+		if parentActive && time.Since(lastFeedback) >= feedbackInterval {
 			if e = parent.feedback(ctx); e != nil {
-				return e
+				// This hardware retires its RTSP bootstrap connection after
+				// /play. Only retire it after a successful encrypted status
+				// response above; video/reverse errors still end the session.
+				if !canRetireFairPlayParent(receiverInfo, e) {
+					return e
+				}
+				parentActive = false
+				parent.conn.close()
+				c.emitDiagnostic(DiagnosticEvent{Stage: "fairplay-parent", Result: "retired"})
 			}
 			lastFeedback = time.Now()
 		}
@@ -396,10 +409,10 @@ func (c *Client) playURLFairPlay(ctx context.Context, parent *rtspSession, crede
 }
 
 // Each HTTP video socket has independent verification, SAP and GCM state.
-func (c *Client) fairPlayVideoConnection(ctx context.Context, credentials hap.Credentials, peerKey []byte, headers []header, getInfo bool) (_ *connection, err error) {
+func (c *Client) fairPlayVideoConnection(ctx context.Context, credentials hap.Credentials, peerKey []byte, headers []header, getInfo bool) (_ *connection, info map[string]any, err error) {
 	conn, err := dial(ctx, c.address, c.port)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() {
 		if err != nil {
@@ -408,26 +421,48 @@ func (c *Client) fairPlayVideoConnection(ctx context.Context, credentials hap.Cr
 	}()
 	secret, err := verifyLegacyPD(ctx, conn, credentials, peerKey)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer clear(secret)
 	if getInfo {
 		reply, e := conn.get(ctx, "/server-info", headers)
 		if e != nil {
-			return nil, e
+			return nil, nil, e
 		}
 		if e = errStatus(reply, "GET /server-info"); e != nil {
-			return nil, e
+			return nil, nil, e
+		}
+		info, e = unpackPlist(reply.Body)
+		if e != nil {
+			return nil, nil, e
 		}
 	}
 	sap, err := setupFairPlay(ctx, conn, headers)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err = upgradeFairPlay(ctx, conn, sap, secret, headers); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return conn, nil
+	// Pair verification and FairPlay do not authorize password-protected
+	// HTTP requests. Each encrypted socket needs its own Digest challenge.
+	password, err := c.loadLegacyPassword()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err = primeLegacyDigestWithDiagnostics(ctx, conn, password, c.emitDiagnostic, headers...); err != nil {
+		return nil, nil, err
+	}
+	return conn, info, nil
+}
+
+// canRetireFairPlayParent is deliberately limited to the hardware/firmware
+// observed on 2026-10-14. Other receivers keep the strict parent lifecycle.
+func canRetireFairPlayParent(info map[string]any, err error) bool {
+	if info["model"] != "AppleTV3,2" || info["osBuildVersion"] != "12H1006" || info["srcvers"] != "220.68" {
+		return false
+	}
+	return errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
 }
 
 func acknowledgeFairPlayEvents(conn net.Conn, pending []byte) error {

@@ -286,7 +286,16 @@ The CLI exposes the same option with `-fairplay-control`. It applies only to
 legacy video receivers, defaults off, and does not fall back to plaintext on
 failure. Normal pairing must still be completed for a protected receiver.
 
-The parent RTSP SETUP/RECORD/feedback/TEARDOWN lifecycle remains active. Playback
+The parent RTSP SETUP/RECORD/feedback/TEARDOWN lifecycle normally remains active.
+The tested AppleTV3,2 (OS build 12H1006, AirPlay 220.68) closes its parent after
+accepting `/play`. Only for that exact `/server-info` identity, a parent EOF,
+connection reset or broken pipe retires parent keepalives after a successful
+encrypted playback-info response. Other versions, authentication/protocol errors,
+timeouts, and loss of either video connection still fail the session. The
+retirement emits a `fairplay-parent` / `retired` diagnostic event.
+
+Every encrypted video socket prepares its own Digest authentication. Pair
+verification and FairPlay setup do not replace the receiver's fixed password. Playback
 completion, cancellation and stale-session cleanup use session-scoped stop;
 reconnections negotiate fresh crypto instead of reusing a failed record stream.
 Receiver signatures are checked when the advertised `pk` is supplied through
@@ -315,8 +324,10 @@ The lab accepts native QuickTime command and encrypted reverse-event traffic.
 It also opens a real parent TCP event port, sends a command and validates its
 acknowledgement, and sends three UDP timing probes to the sender. State counters
 expose replies and errors. Session validation requires pair verification, SAP,
-SETUP and RECORD before playback; teardown ends the owning session. Dropping
-the owning parent connection also ends playback. It never fetches or decodes media.
+SETUP and RECORD before playback; teardown ends the owning session. By default, dropping
+the owning parent connection also ends playback. The hardware profile below
+transfers playback ownership to the command socket and closes the parent after
+accepting `/play`; losing the command socket still releases playback. It never fetches or decodes media.
 
 Validated with QuickTime on macOS 27.0.1, including parent-event acknowledgement
 and three timing replies. The full Go race suite covers session order, malformed
@@ -329,5 +340,25 @@ go test -race ./...
 SIMULATOR_MDNS_IP=YOUR_MAC_LAN_IP go test -race ./simulator -run TestFairPlayMDNSDiscovery -v
 ```
 
-Physical Apple TV playback and screen-code refresh remain unverified. Broadster's
+### AppleTV3,2 build 12H1006 regression profile
+
+```sh
+go run ./cmd/simulator -fairplay -fairplay-profile 'appletv3,2-12H1006' \
+  -listen 127.0.0.1:17000 -password test-password
+```
+
+In Go use `Config{FairPlay: true, FairPlayProfile: FairPlayAppleTV32_12H1006}`.
+This fixture models the AppleTV3,2 tested on 2026-10-14, with OS build 12H1006,
+AirPlay 220.68 and protocol version 1.0. It does not stand in for newer Apple TVs.
+`/server-info` includes those version fields; `DetachedParents` counts accepted
+plays that close the bootstrap parent. All password-enabled FairPlay profiles
+challenge protected encrypted requests with a separate Digest nonce per socket.
+
+Regression tests cover per-socket password challenges, progress past the parent
+feedback interval, completion, fresh replay, cancellation, and video transport
+loss. Version/error boundary tests keep the parent exception narrow. The strict
+lab profile remains available by omitting `-fairplay-profile`.
+
+Physical playback of a complete 30-second clip was confirmed on this receiver.
+Audio and rotating screen-code refresh remain unverified. Broadster's
 `pi/tools/airplay-research` contains reproduction notes and sanitized evidence.

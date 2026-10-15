@@ -55,7 +55,13 @@ func (r *Receiver) serverInfo() map[string]any {
 		txt = append(txt, byte(len(field)))
 		txt = append(txt, field...)
 	}
-	return map[string]any{"txtAirPlay": txt, "features": r.nativeFeatures(), "model": "AppleTV3,2", "name": r.config.Name, "deviceID": r.deviceID(), "macAddress": r.deviceID(), "sourceVersion": "220.68", "statusFlags": r.statusFlags(), "vv": 2, "pi": r.pairingID(), "pk": ed25519.NewKeyFromSeed(r.credentials.LTSK).Public().(ed25519.PublicKey), "displays": []any{map[string]any{"uuid": r.pairingID(), "width": 1920, "height": 1080, "widthPixels": 1920, "heightPixels": 1080, "widthPhysical": 0, "heightPhysical": 0, "refreshRate": 1.0 / 60.0, "features": 14, "rotation": true}}, "audioFormats": []any{map[string]any{"type": 100, "audioOutputFormats": 67108860, "audioInputFormats": 67108860}, map[string]any{"type": 101, "audioOutputFormats": 67108860, "audioInputFormats": 67108860}}, "keepAliveLowPower": true, "keepAliveSendStatsAsBody": true}
+	info := map[string]any{"txtAirPlay": txt, "features": r.nativeFeatures(), "model": "AppleTV3,2", "name": r.config.Name, "deviceID": r.deviceID(), "macAddress": r.deviceID(), "sourceVersion": "220.68", "statusFlags": r.statusFlags(), "vv": 2, "pi": r.pairingID(), "pk": ed25519.NewKeyFromSeed(r.credentials.LTSK).Public().(ed25519.PublicKey), "displays": []any{map[string]any{"uuid": r.pairingID(), "width": 1920, "height": 1080, "widthPixels": 1920, "heightPixels": 1080, "widthPhysical": 0, "heightPhysical": 0, "refreshRate": 1.0 / 60.0, "features": 14, "rotation": true}}, "audioFormats": []any{map[string]any{"type": 100, "audioOutputFormats": 67108860, "audioInputFormats": 67108860}, map[string]any{"type": 101, "audioOutputFormats": 67108860, "audioInputFormats": 67108860}}, "keepAliveLowPower": true, "keepAliveSendStatsAsBody": true}
+	if r.config.FairPlayProfile == FairPlayAppleTV32_12H1006 {
+		info["osBuildVersion"] = "12H1006"
+		info["srcvers"] = "220.68"
+		info["protovers"] = "1.0"
+	}
+	return info
 }
 
 func (r *Receiver) serveFairPlay(socket net.Conn) {
@@ -70,7 +76,6 @@ func (r *Receiver) serveFairPlay(socket net.Conn) {
 	var pinStarted bool
 	var secret []byte
 	defer func() { clear(secret) }()
-	var parentSession string
 	var channels *parentChannels
 	var setupDone, recorded, sapReady, tornDown bool
 	defer func() {
@@ -81,11 +86,12 @@ func (r *Receiver) serveFairPlay(socket net.Conn) {
 	var controller string
 	stopParent := func() {
 		r.mu.Lock()
-		owned := r.fairPlayPlaybackParent == socket || (parentSession != "" && r.session == parentSession)
+		owned := r.fairPlayPlaybackParent == socket || r.fairPlayPlaybackVideo == socket
 		changed := owned && r.state.PlayerState != "IDLE"
 		if owned {
 			r.state.PlayerState = "IDLE"
 			r.fairPlayPlaybackParent = nil
+			r.fairPlayPlaybackVideo = nil
 		}
 		if r.fairPlayParents[controller] == socket {
 			delete(r.fairPlayParents, controller)
@@ -97,6 +103,12 @@ func (r *Receiver) serveFairPlay(socket net.Conn) {
 		}
 	}
 	defer stopParent()
+	// A new nonce per connection catches accidental reuse of the parent's
+	// or command socket's authorization on the reverse socket.
+	passwordAuth, err := newReceiverDigestAuth(r.config.Password)
+	if err != nil {
+		return
+	}
 	var mixed, verified, encrypted, reverse bool
 	trace := func(e ProtocolEvent) {
 		e.Connection = socket.RemoteAddr().String()
@@ -141,6 +153,7 @@ func (r *Receiver) serveFairPlay(socket net.Conn) {
 			io.WriteString(conn, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
 			return
 		}
+		var detachParent net.Conn
 		code := 200
 		extra := ""
 		contentType := "application/x-apple-binary-plist"
@@ -156,15 +169,16 @@ func (r *Receiver) serveFairPlay(socket net.Conn) {
 				}
 			}
 		}
-		needsPassword := method == "SETUP" || passwordProbe
+		videoRequest := path == "/play" || path == "/reverse" || path == "/stop" || path == "/rate" || path == "/scrub" || path == "/playback-info" || path == "/setProperty" || path == "/getProperty"
+		needsPassword := method == "SETUP" || passwordProbe || (encrypted && videoRequest)
 		username := "iTunes"
-		if passwordProbe {
+		if passwordProbe || encrypted {
 			username = "AirPlay"
 		}
 		switch {
-		case needsPassword && r.passwordAuth.enabled() && !r.passwordAuth.authorizeAs(method, target, headers.Get("Authorization"), username):
+		case needsPassword && passwordAuth.enabled() && !passwordAuth.authorizeAs(method, target, headers.Get("Authorization"), username):
 			code = 401
-			extra = "WWW-Authenticate: " + r.passwordAuth.challengeHeader() + "\r\n"
+			extra = "WWW-Authenticate: " + passwordAuth.challengeHeader() + "\r\n"
 			r.mu.Lock()
 			r.state.DigestChallenges++
 			r.mu.Unlock()
@@ -275,7 +289,6 @@ func (r *Receiver) serveFairPlay(socket net.Conn) {
 			}
 			setupDone = true
 			info = map[string]any{"timingPort": channels.timingPort(), "eventPort": channels.eventPort()}
-			parentSession, _ = props["sessionUUID"].(string)
 			if verified {
 				r.mu.Lock()
 				if r.fairPlayParents == nil {
@@ -350,6 +363,11 @@ func (r *Receiver) serveFairPlay(socket net.Conn) {
 			}
 			r.session = session
 			r.fairPlayPlaybackParent = r.fairPlayParents[controller]
+			if r.config.FairPlayProfile == FairPlayAppleTV32_12H1006 {
+				detachParent = r.fairPlayPlaybackParent
+				r.fairPlayPlaybackParent = nil
+				r.fairPlayPlaybackVideo = socket
+			}
 			r.state.URL = location
 			r.state.Position = position * r.state.Duration
 			if hasSeconds {
@@ -436,6 +454,15 @@ func (r *Receiver) serveFairPlay(socket net.Conn) {
 		conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 		if n, e := conn.Write(wire); e != nil || n != len(wire) {
 			return
+		}
+		if detachParent != nil {
+			// Transfer ownership before closing the bootstrap socket so its
+			// deferred cleanup cannot stop the accepted video session.
+			detachParent.Close()
+			r.mu.Lock()
+			r.state.DetachedParents++
+			r.mu.Unlock()
+			trace(ProtocolEvent{Method: "PARENT-DETACH", Status: 200, Encrypted: encrypted})
 		}
 		if code >= 400 && (path == "/pair-verify" || path == "/fp-setup" || path == "/fp-setup2") {
 			return

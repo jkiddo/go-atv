@@ -32,6 +32,7 @@ func run() error {
 	flag.StringVar(&cfg.Password, "password", "", "fixed AirPlay password; legacy mode requires -credentials-out")
 	flag.StringVar(&cfg.PIN, "pin", "", "four-digit test PIN for native legacy pairing; requires -fairplay")
 	flag.BoolVar(&cfg.FairPlay, "fairplay", false, "enable experimental fp-setup2 receiver and native RTSP control")
+	flag.StringVar(&cfg.FairPlayProfile, "fairplay-profile", "", "hardware profile: appletv3,2-12H1006 (requires -fairplay)")
 	flag.Parse()
 	if cfg.FairPlay {
 		cfg.Trace = func(e simulator.ProtocolEvent) { b, _ := json.Marshal(e); log.Print(string(b)) }
