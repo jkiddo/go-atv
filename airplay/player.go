@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jkiddo/go-atv/hap"
@@ -404,9 +405,11 @@ func waitForPlaybackToEnd(ctx context.Context, rtsp *rtspSession) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			// An orderly close can mean the remote stopped the video.
+			// A close or reset of our playback connection can mean the remote
+			// stopped the video. This does not establish standalone receiver idle.
 			// Timeouts and protocol errors must remain failures.
-			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, net.ErrClosed) {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) ||
+				errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.ECONNRESET) {
 				return nil
 			}
 			return err

@@ -13,11 +13,96 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/jkiddo/go-atv/hap"
 )
+
+func TestPlaybackConnectionReset(t *testing.T) {
+	for _, standalone := range []bool{false, true} {
+		name := "owning playback loop"
+		if standalone {
+			name = "standalone status"
+		}
+		t.Run(name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			done := make(chan error, 1)
+			go func() {
+				conn, err := listener.Accept()
+				if err != nil {
+					done <- err
+					return
+				}
+				defer conn.Close()
+				conn.SetDeadline(time.Now().Add(2 * time.Second))
+				req, err := http.ReadRequest(bufio.NewReader(conn))
+				if err != nil {
+					done <- err
+					return
+				}
+				req.Body.Close()
+				if req.Method != "GET" || req.URL.Path != "/playback-info" {
+					done <- fmt.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
+					return
+				}
+				// Abort after consuming the request, without supplying playback
+				// evidence. SetLinger(0) forces a TCP reset instead of EOF.
+				done <- conn.(*net.TCPConn).SetLinger(0)
+			}()
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			port := listener.Addr().(*net.TCPAddr).Port
+			if standalone {
+				client := New("test", filepath.Join(t.TempDir(), "credentials"), "127.0.0.1", WithPort(port), WithAuthMode("open"), WithProperties(map[string]string{"features": "0x1"}))
+				info, err := client.PlaybackInfo(ctx)
+				if !errors.Is(err, syscall.ECONNRESET) || info != nil {
+					t.Errorf("standalone reset must remain an error, not idle: info=%v err=%v", info, err)
+				}
+			} else {
+				conn, err := dial(ctx, "127.0.0.1", port)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer conn.close()
+				if err := waitForPlaybackToEnd(ctx, newRTSPSession(conn)); err != nil {
+					t.Errorf("owning connection reset should end playback: %v", err)
+				}
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+type playbackReadErrorConn struct {
+	net.Conn
+	err error
+}
+
+func (c playbackReadErrorConn) Write(b []byte) (int, error) { return len(b), nil }
+func (c playbackReadErrorConn) Read([]byte) (int, error)    { return 0, c.err }
+
+func TestPlaybackPollPreservesTransportFailures(t *testing.T) {
+	for _, failure := range []error{context.DeadlineExceeded, context.Canceled, io.ErrUnexpectedEOF, syscall.ECONNREFUSED} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			client, server := net.Pipe()
+			defer client.Close()
+			defer server.Close()
+			transport := playbackReadErrorConn{Conn: client, err: &net.OpError{Op: "read", Net: "tcp", Err: failure}}
+			err := waitForPlaybackToEnd(t.Context(), newRTSPSession(&connection{tcp: transport}))
+			if !errors.Is(err, failure) {
+				t.Fatalf("got %v, want %v", err, failure)
+			}
+		})
+	}
+}
 
 func TestPlaybackRetriesEndpointDigestChallenge(t *testing.T) {
 	for _, tc := range []struct {
