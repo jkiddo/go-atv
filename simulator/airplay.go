@@ -58,7 +58,7 @@ func (r *Receiver) TXTRecords() []string {
 		return []string{"deviceid=02:00:00:00:00:01", "model=AppleTV14,1", "features=0x0,0x40", "osvers=17.0", "srcvers=690.7.1", "flags=0x0", "name=" + r.config.Name}
 	}
 	pw := "false"
-	if r.config.Password != "" {
+	if r.password() != "" {
 		pw = "true"
 	}
 	if r.config.FairPlay {
@@ -81,6 +81,9 @@ func (r *Receiver) serve(conn net.Conn) {
 	if r.config.FairPlay {
 		r.serveFairPlay(conn)
 		return
+	}
+	if r.config.InterruptGate {
+		defer r.releaseHolder(conn)
 	}
 	reader := bufio.NewReader(conn)
 	var verify *legacyVerify
@@ -134,9 +137,18 @@ func (r *Receiver) serve(conn net.Conn) {
 			} else {
 				code = 400
 			}
-		} else if uri.Path != "/info" && uri.Path != "/server-info" && r.config.Password != "" && !r.authorized(method, target, headers.Get("Authorization")) {
-			code = 401
-			extra = fmt.Sprintf("WWW-Authenticate: Digest realm=\"AirPlay\", nonce=\"%s\"\r\n", r.nonce)
+		} else if r.gateRefuses(conn, uri.Path) {
+			code = 453
+		} else if uri.Path != "/info" && uri.Path != "/server-info" && r.password() != "" && !r.authorized(method, target, headers.Get("Authorization")) {
+			if r.config.InterruptGate && headers.Get("Authorization") != "" {
+				// A wrong Digest answer is refused with 453 rather than
+				// challenged again, and the TV shows a fresh code.
+				code = 453
+				r.RotateAirPlayCode()
+			} else {
+				code = 401
+				extra = fmt.Sprintf("WWW-Authenticate: Digest realm=\"AirPlay\", nonce=\"%s\"\r\n", r.nonce)
+			}
 		} else {
 			r.mu.Lock()
 			var info map[string]any
@@ -170,6 +182,9 @@ func (r *Receiver) serve(conn net.Conn) {
 					break
 				}
 				r.session = session
+				if r.config.InterruptGate {
+					r.holder = conn
+				}
 				r.state.URL = mediaURL
 				r.state.Position = position * r.state.Duration
 				r.state.PlayerState = "PLAYING"
@@ -190,6 +205,9 @@ func (r *Receiver) serve(conn net.Conn) {
 				}
 				r.state.PlayerState = "IDLE"
 				r.session = ""
+				if r.holder == conn {
+					r.holder = nil
+				}
 			case method == "POST" && uri.Path == "/rate":
 				value, err := strconv.ParseFloat(uri.Query().Get("value"), 64)
 				if err != nil {
@@ -227,6 +245,30 @@ func (r *Receiver) serve(conn net.Conn) {
 	}
 }
 
+// gateRefuses reports whether the InterruptGate model refuses this request:
+// another connection holds the active session and the path is not one of the
+// few the real receiver still answers.
+func (r *Receiver) gateRefuses(conn net.Conn, path string) bool {
+	if !r.config.InterruptGate || path == "/info" || path == "/server-info" || path == "/pair-verify" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.holder != nil && r.holder != conn
+}
+
+// releaseHolder frees the receiver when the holding connection closes. The
+// real device then accepts a new sender immediately and its playback ends.
+func (r *Receiver) releaseHolder(conn net.Conn) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.holder == conn {
+		r.holder = nil
+		r.session = ""
+		r.state.PlayerState = "IDLE"
+	}
+}
+
 func digest(value string) string { sum := md5.Sum([]byte(value)); return hex.EncodeToString(sum[:]) }
 func (r *Receiver) authorized(method, target, authorization string) bool {
 	if !strings.HasPrefix(authorization, "Digest ") {
@@ -242,7 +284,7 @@ func (r *Receiver) authorized(method, target, authorization string) bool {
 	if fields["realm"] != "AirPlay" || fields["nonce"] != r.nonce || fields["uri"] != target || fields["username"] != "AirPlay" {
 		return false
 	}
-	want := digest(digest("AirPlay:AirPlay:"+r.config.Password) + ":" + r.nonce + ":" + digest(method+":"+target))
+	want := digest(digest("AirPlay:AirPlay:"+r.password()) + ":" + r.nonce + ":" + digest(method+":"+target))
 	return subtle.ConstantTimeCompare([]byte(want), []byte(fields["response"])) == 1
 }
 

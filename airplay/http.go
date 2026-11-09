@@ -326,7 +326,27 @@ type StatusError struct {
 }
 
 func (e *StatusError) Error() string {
-	return fmt.Sprintf("airplay: %s failed with status %d %s", e.What, e.Code, e.Message)
+	msg := fmt.Sprintf("airplay: %s failed with status %d %s", e.What, e.Code, e.Message)
+	if e.Code == statusReceiverBusy {
+		msg += " (receiver refused the request: another AirPlay connection is still active, or the saved AirPlay code is stale)"
+	}
+	return msg
+}
+
+// statusReceiverBusy is the status AirPlay receivers (notably Apple TV 3)
+// return from their interrupt gate. Observed on AppleTV3,2 (12H1006) in two
+// cases: another connection to the receiver is still open (every request from
+// a new connection, even /stop with the owner's session ID, is refused until
+// it closes), and an outdated on-screen AirPlay code. The "Not Enough
+// Bandwidth" reason phrase is cosmetic.
+const statusReceiverBusy = 453
+
+// IsBusy reports whether the receiver refused the request with 453. It is not
+// an IsAuthFailure: the pairing credentials are accepted. Retry once the other
+// connection has closed, or refresh the AirPlay code if it has rotated.
+func IsBusy(err error) bool {
+	var statusErr *StatusError
+	return errors.As(err, &statusErr) && statusErr.Code == statusReceiverBusy
 }
 
 // IsAuthFailure reports whether the error looks like the receiver rejected

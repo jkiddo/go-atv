@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -35,10 +36,18 @@ type Config struct {
 	DiscoveryBackend   string // auto (native Bonjour for FairPlay on macOS), go, or native
 	HidePasswordStatus bool   // FairPlay lab: challenge SETUP even when TXT omits password requirement
 	Password           string
-	PIN                string              // explicit, simulator-only legacy pairing PIN
-	FairPlayProfile    string              // empty keeps the strict lab parent lifecycle
-	FairPlay           bool                // opt-in native sender interoperability lab
-	Trace              func(ProtocolEvent) // metadata only; never emits keys or bodies
+	// InterruptGate models the AppleTV3,2 (12H1006) busy gate in legacy mode:
+	// while another connection holds an active playback session, every request
+	// from a new connection except /info, /server-info and /pair-verify is
+	// refused with 453, even /stop for the owner's session ID. The gate lifts
+	// when the holding connection closes. With Password set, a request that
+	// carries a wrong Digest response also gets 453 (not 401) and the on-screen
+	// code rotates, as seen on hardware.
+	InterruptGate   bool
+	PIN             string              // explicit, simulator-only legacy pairing PIN
+	FairPlayProfile string              // empty keeps the strict lab parent lifecycle
+	FairPlay        bool                // opt-in native sender interoperability lab
+	Trace           func(ProtocolEvent) // metadata only; never emits keys or bodies
 }
 
 // State is a copy of receiver playback state. URLs are recorded, never fetched.
@@ -84,6 +93,7 @@ type Receiver struct {
 	recordedParents        map[net.Conn]bool
 	nonce                  string
 	session                string
+	holder                 net.Conn // InterruptGate: connection owning the active session
 	controllers            map[string]bool
 	reversePeers           map[*reversePeer]struct{}
 	fairPlayParents        map[string]net.Conn
@@ -101,6 +111,9 @@ func New(config Config) (*Receiver, error) {
 	}
 	if config.DiscoveryBackend != "" && config.DiscoveryBackend != "auto" && config.DiscoveryBackend != "go" && config.DiscoveryBackend != "native" {
 		return nil, errors.New("unknown discovery backend")
+	}
+	if config.InterruptGate && (config.MRP || config.FairPlay) {
+		return nil, errors.New("InterruptGate models the legacy HTTP receiver; it cannot be combined with MRP or FairPlay")
 	}
 	if config.PIN != "" && (!config.FairPlay || len(config.PIN) != 4) {
 		return nil, errors.New("PIN requires FairPlay lab mode and four digits")
@@ -162,6 +175,42 @@ func New(config Config) (*Receiver, error) {
 func (r *Receiver) Addr() net.Addr  { return r.listener.Addr() }
 func (r *Receiver) Port() int       { return r.listener.Addr().(*net.TCPAddr).Port }
 func (r *Receiver) Snapshot() State { r.mu.Lock(); defer r.mu.Unlock(); return r.state }
+
+// AirPlayCode returns the fixed legacy password, which models the code the TV
+// currently displays.
+func (r *Receiver) AirPlayCode() string { return r.password() }
+
+func (r *Receiver) password() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.config.Password
+}
+
+// RotateAirPlayCode replaces the legacy password with a new four-digit code,
+// as the TV does when it displays a fresh on-screen code. It returns the new
+// code, or "" when the receiver is not a legacy receiver with a password.
+func (r *Receiver) RotateAirPlayCode() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.rotateCodeLocked()
+}
+
+func (r *Receiver) rotateCodeLocked() string {
+	if r.config.MRP || r.config.FairPlay || r.config.Password == "" {
+		return ""
+	}
+	for {
+		var b [2]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return ""
+		}
+		code := fmt.Sprintf("%04d", (int(b[0])<<8|int(b[1]))%10000)
+		if code != r.config.Password {
+			r.config.Password = code
+			return code
+		}
+	}
+}
 
 // FailNextPlay rejects one subsequent playback request without replacing media.
 func (r *Receiver) FailNextPlay() { r.mu.Lock(); r.failNext = true; r.mu.Unlock() }

@@ -393,7 +393,15 @@ func (c *Client) PlayURL(ctx context.Context, mediaURL string, position float64)
 		// A refused status probe is not evidence of idle playback or bad
 		// credentials. Let the explicit play request report its own result.
 	}
-	return playURLV1(ctx, rtsp, mediaURL, position, c.legacySessionPath(), legacyDeviceID(*credentials))
+	err = playURLV1(ctx, rtsp, mediaURL, position, c.legacySessionPath(), legacyDeviceID(*credentials))
+	if IsBusy(err) && conn.digest != nil {
+		// The receiver answered the status probe with a Digest challenge, so
+		// no other connection was holding it, yet it then refused /play.
+		// AppleTV3,2 does this when the on-screen code has rotated since it
+		// was saved.
+		return fmt.Errorf("%w (the receiver challenged for an AirPlay code and then refused /play; the on-screen code may have changed: run pair-airplay again)", err)
+	}
+	return err
 }
 
 func (c *Client) legacySessionPath() string {

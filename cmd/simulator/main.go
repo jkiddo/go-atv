@@ -32,6 +32,7 @@ func run() error {
 	credentials := flag.String("credentials-out", "", "create a new file with simulator-only pre-paired credentials")
 	flag.StringVar(&cfg.Password, "password", "", "fixed AirPlay password; legacy mode requires -credentials-out")
 	flag.StringVar(&cfg.PIN, "pin", "", "four-digit test PIN for native legacy pairing; requires -fairplay")
+	flag.BoolVar(&cfg.InterruptGate, "interrupt-gate", false, "legacy mode: model AppleTV3,2 busy gate (453 while another connection holds a session; wrong code rotates)")
 	flag.BoolVar(&cfg.FairPlay, "fairplay", false, "enable experimental fp-setup2 receiver and native RTSP control")
 	flag.StringVar(&cfg.FairPlayProfile, "fairplay-profile", "", "hardware profile: appletv3,2-12H1006 (requires -fairplay)")
 	flag.BoolVar(&cfg.MRP, "mrp", false, "enable modern AirPlay 2 MRP receiver (use -credentials-out)")

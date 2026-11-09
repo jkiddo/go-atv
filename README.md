@@ -349,6 +349,16 @@ path can be exercised. The default mode does not implement interactive PIN setup
 or Companion; the existing encrypted AirPlay 2 and Companion loopback tests remain
 in place.
 
+`Config.InterruptGate` (`-interrupt-gate`) models the busy gate observed on an
+AppleTV3,2 (12H1006) in legacy mode. While one connection holds a playing session, a
+second connection gets HTTP 453 ("Not Enough Bandwidth") for everything except `/info`,
+`/server-info` and `/pair-verify`, including `/playback-info` and a `/stop` carrying
+the owner's session ID. The gate lifts the moment the holder's connection closes (a
+killed sender frees the receiver; a frozen one does not). With a password, a wrong
+Digest answer also gets 453 instead of a new challenge and the code rotates;
+`RotateAirPlayCode` simulates the TV showing a new on-screen code. The real client
+reports that case as "the on-screen code may have changed".
+
 For fixed-password testing, start with:
 
 ```sh
