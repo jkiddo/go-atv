@@ -85,19 +85,36 @@ func formatRequest(r request) []byte {
 	return b.Bytes()
 }
 
+// Limits on a single HTTP/RTSP message. A receiver (or anything pretending to
+// be one) must not be able to make us buffer without bound or crash the parser.
+const (
+	maxHeaderBytes = 64 << 10
+	maxBodyBytes   = 16 << 20
+)
+
 // splitMessage extracts one complete message (start line, headers, body per
 // Content-Length) from data. It returns the start line, headers, body and
 // the remaining bytes, or ok=false if data does not yet hold a full message.
-func splitMessage(data []byte) (startLine string, headers map[string]string, body, rest []byte, ok bool) {
+// A non-nil error means the byte stream can no longer be framed (oversized
+// header block or body, or a malformed or conflicting Content-Length), and the
+// connection should be discarded.
+func splitMessage(data []byte) (startLine string, headers map[string]string, body, rest []byte, ok bool, err error) {
 	idx := bytes.Index(data, []byte("\r\n\r\n"))
 	if idx < 0 {
-		return "", nil, nil, data, false
+		if len(data) > maxHeaderBytes {
+			return "", nil, nil, data, false, errors.New("airplay: header block too large")
+		}
+		return "", nil, nil, data, false, nil
+	}
+	if idx > maxHeaderBytes {
+		return "", nil, nil, data, false, errors.New("airplay: header block too large")
 	}
 	headerBlock := string(data[:idx])
 	remainder := data[idx+4:]
 
 	lines := strings.Split(headerBlock, "\r\n")
 	headers = make(map[string]string, len(lines)-1)
+	contentLength, haveLength := 0, false
 	for _, line := range lines[1:] {
 		if line == "" {
 			continue
@@ -106,25 +123,52 @@ func splitMessage(data []byte) (startLine string, headers map[string]string, bod
 		if !found {
 			continue
 		}
-		headers[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(value)
-	}
-
-	contentLength := 0
-	if cl, exists := headers["content-length"]; exists {
-		if n, err := strconv.Atoi(cl); err == nil {
-			contentLength = n
+		key = strings.ToLower(strings.TrimSpace(key))
+		value = strings.TrimSpace(value)
+		if key == "content-length" {
+			n, err := parseContentLength(value)
+			if err != nil {
+				return "", nil, nil, data, false, err
+			}
+			if haveLength && n != contentLength {
+				return "", nil, nil, data, false, errors.New("airplay: conflicting Content-Length headers")
+			}
+			contentLength, haveLength = n, true
 		}
+		headers[key] = value
 	}
 	if len(remainder) < contentLength {
-		return "", nil, nil, data, false
+		return "", nil, nil, data, false, nil
 	}
-	return lines[0], headers, remainder[:contentLength], remainder[contentLength:], true
+	return lines[0], headers, remainder[:contentLength], remainder[contentLength:], true, nil
+}
+
+// parseContentLength accepts only a plain non-negative decimal number within
+// maxBodyBytes: no sign, no spaces inside, no list of values.
+func parseContentLength(value string) (int, error) {
+	if value == "" {
+		return 0, errors.New("airplay: empty Content-Length")
+	}
+	n := 0
+	for _, c := range value {
+		if c < '0' || c > '9' {
+			return 0, fmt.Errorf("airplay: malformed Content-Length %q", value)
+		}
+		n = n*10 + int(c-'0')
+		if n > maxBodyBytes {
+			return 0, fmt.Errorf("airplay: Content-Length %q exceeds %d bytes", value, maxBodyBytes)
+		}
+	}
+	return n, nil
 }
 
 // parseResponse parses one response from data, returning the remaining
 // unconsumed bytes. A nil response with nil error means more data is needed.
 func parseResponse(data []byte) (*response, []byte, error) {
-	startLine, headers, body, rest, ok := splitMessage(data)
+	startLine, headers, body, rest, ok, err := splitMessage(data)
+	if err != nil {
+		return nil, data, err
+	}
 	if !ok {
 		return nil, data, nil
 	}
@@ -152,7 +196,10 @@ func parseResponse(data []byte) (*response, []byte, error) {
 // parseRequest parses one request from data, returning the remaining
 // unconsumed bytes. A nil request with nil error means more data is needed.
 func parseRequest(data []byte) (*incomingRequest, []byte, error) {
-	startLine, headers, body, rest, ok := splitMessage(data)
+	startLine, headers, body, rest, ok, err := splitMessage(data)
+	if err != nil {
+		return nil, data, err
+	}
 	if !ok {
 		return nil, data, nil
 	}
@@ -256,6 +303,9 @@ func (c *connection) exchange(ctx context.Context, r request) (*response, error)
 	for {
 		resp, rest, err := parseResponse(c.pending)
 		if err != nil {
+			// The stream position is uncertain; never reuse this connection.
+			c.pending = nil
+			c.tcp.Close()
 			return nil, err
 		}
 		if resp != nil {

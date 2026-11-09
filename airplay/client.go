@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jkiddo/go-atv/hap"
+	"github.com/jkiddo/go-atv/internal/atomicfile"
 )
 
 // defaultPort is the port AirPlay receivers listen on when discovery is
@@ -532,10 +533,7 @@ func (c *Client) saveLegacyPassword(password string) error {
 	if path == "" {
 		return errors.New("airplay: credentials path is required to save the AirPlay code")
 	}
-	if err := os.WriteFile(path, []byte(password+"\n"), 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0o600)
+	return atomicfile.Write(path, []byte(password+"\n"), 0o600)
 }
 
 func primeLegacyDigest(ctx context.Context, conn *connection, password string) error {

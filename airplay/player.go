@@ -7,12 +7,12 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/jkiddo/go-atv/hap"
+	"github.com/jkiddo/go-atv/internal/atomicfile"
 )
 
 // PlaybackError indicates the receiver reported a playback failure.
@@ -319,38 +319,10 @@ func saveLegacySessionID(path, sessionID string) error {
 	if path == "" {
 		return nil
 	}
-	// Write through a temporary file that is fsynced before the rename, and
-	// sync the parent directory afterwards, so a power cut leaves either the
-	// previous or the new identifier on disk, never a torn or vanished one.
-	temp := path + ".tmp"
-	file, err := os.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := file.Write([]byte(sessionID + "\n")); err != nil {
-		file.Close()
-		_ = os.Remove(temp)
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		_ = os.Remove(temp)
-		return err
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(temp)
-		return err
-	}
-	if err := os.Rename(temp, path); err != nil {
-		_ = os.Remove(temp)
-		return err
-	}
-	directory, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return nil
-	}
-	defer directory.Close()
-	return directory.Sync()
+	// The identifier is the only handle that can address /stop at a stale
+	// receiver session, so a power cut must leave the previous or the new one
+	// on disk, never a torn or vanished file.
+	return atomicfile.Write(path, []byte(sessionID+"\n"), 0o600)
 }
 
 func clearLegacySessionID(path string) error {

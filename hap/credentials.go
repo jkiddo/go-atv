@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/jkiddo/go-atv/internal/atomicfile"
 )
 
 // Credentials are the long-term keys and identifiers produced by HAP pairing.
@@ -84,14 +86,15 @@ func LoadCredentials(path string) (Credentials, error) {
 }
 
 // SaveCredentials writes credentials to path with owner-only permissions,
-// creating parent directories as needed.
+// creating parent directories as needed. The write is atomic: a crash leaves
+// the previous credentials intact rather than a truncated file.
 func SaveCredentials(path string, c Credentials) error {
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
 	}
-	return os.WriteFile(path, []byte(c.String()+"\n"), 0o600)
+	return atomicfile.Write(path, []byte(c.String()+"\n"), 0o600)
 }
 
 // NewPairingID generates a random UUIDv4 string identifier, matching the
