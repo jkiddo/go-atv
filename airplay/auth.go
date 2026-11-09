@@ -98,7 +98,7 @@ func pairPinStart(ctx context.Context, c *connection, hkp string) error {
 	if err != nil {
 		return err
 	}
-	return errStatus(resp, "POST /pair-pin-start")
+	return errPinStart(resp)
 }
 
 // pairSetup implements HAP pair-setup (M1..M6) over the AirPlay HTTP

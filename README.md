@@ -472,3 +472,19 @@ lab profile remains available by omitting `-fairplay-profile`.
 Physical playback of a complete 30-second clip was confirmed on this receiver.
 Audio and rotating screen-code refresh remain unverified. Broadster's
 `pi/tools/airplay-research` contains reproduction notes and sanitized evidence.
+
+## License
+
+Copyright (C) 2026 Jens Kristian Villadsen.
+
+go-atv is licensed under the [GNU Lesser General Public License v3.0](LICENSE). The GPLv3
+terms that the LGPL incorporates are in [COPYING.GPL](COPYING.GPL).
+
+### Attribution
+
+Parts of this repository are derived from other projects: the FairPlay SAP code in
+`internal/fairplay` and `simulator/receiver_digest.go` come from
+[doubletake](https://github.com/omarroth/doubletake) (LGPL-3.0-or-later), and the MRP
+protobuf subset in `internal/mrpwire` comes from [pyatv](https://github.com/postlund/pyatv)
+(MIT). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the file list and
+[third_party/](third_party/) for the upstream license texts.

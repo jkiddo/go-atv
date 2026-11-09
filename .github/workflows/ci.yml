@@ -47,6 +47,13 @@ jobs:
           go mod verify
       - name: Vet
         run: go vet ./...
+      - name: Check dependency licenses
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go install github.com/google/go-licenses@v1.6.0
+          "$(go env GOPATH)/bin/go-licenses" check ./cmd/goatv ./cmd/simulator \
+            --ignore github.com/jkiddo/go-atv \
+            --allowed_licenses=MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC
       - name: Test with race detector
         run: go test -race -count=1 -timeout=5m ./...
       - name: Build

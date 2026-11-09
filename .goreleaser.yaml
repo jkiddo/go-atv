@@ -30,6 +30,12 @@ archives:
         formats: [zip]
     files:
       - README.md
+      - LICENSE
+      - COPYING.GPL
+      - THIRD_PARTY_NOTICES.md
+      - third_party/doubletake/*
+      - third_party/licenses/**/*
+      - internal/mrpwire/LICENSE.pyatv
 
 checksum:
   name_template: checksums.txt

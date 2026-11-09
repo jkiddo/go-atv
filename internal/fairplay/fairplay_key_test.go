@@ -1,3 +1,9 @@
+// Derived from github.com/omarroth/doubletake, internal/airplay/fairplay_key_test.go.
+// Copyright (C) the doubletake authors. Licensed under the GNU Lesser General
+// Public License v3.0 or later (LGPL-3.0-or-later); the license texts are in
+// third_party/doubletake/ and the attribution in THIRD_PARTY_NOTICES.md.
+// Modified for go-atv.
+
 package fairplay
 
 import (

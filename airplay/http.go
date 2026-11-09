@@ -373,11 +373,17 @@ type StatusError struct {
 	What    string
 	Code    int
 	Message string
+	// Hint explains a status whose usual meaning does not apply to this
+	// request. When set it replaces the generic 453 explanation.
+	Hint string
 }
 
 func (e *StatusError) Error() string {
 	msg := fmt.Sprintf("airplay: %s failed with status %d %s", e.What, e.Code, e.Message)
-	if e.Code == statusReceiverBusy {
+	switch {
+	case e.Hint != "":
+		msg += " (" + e.Hint + ")"
+	case e.Code == statusReceiverBusy:
 		msg += " (receiver refused the request: another AirPlay connection is still active, or the saved AirPlay code is stale)"
 	}
 	return msg
@@ -396,7 +402,30 @@ const statusReceiverBusy = 453
 // connection has closed, or refresh the AirPlay code if it has rotated.
 func IsBusy(err error) bool {
 	var statusErr *StatusError
-	return errors.As(err, &statusErr) && statusErr.Code == statusReceiverBusy
+	return errors.As(err, &statusErr) && statusErr.Code == statusReceiverBusy && statusErr.Hint == ""
+}
+
+// pinPairingUnavailableHint explains a 453 from POST /pair-pin-start, where it
+// does not mean "busy": the receiver is not set up to show a pairing PIN.
+// doubletake's Apple TV 3 receiver model answers this way when PIN
+// verification is not enabled; it has not been confirmed on hardware here.
+const pinPairingUnavailableHint = "the receiver refused to start PIN pairing, so it is probably not set up to show a pairing PIN: check the Apple TV's AirPlay security settings (device verification / PIN), and that no other AirPlay session is active"
+
+// errPinStart converts the response to POST /pair-pin-start into an error.
+func errPinStart(resp *response) error {
+	err := errStatus(resp, "POST /pair-pin-start")
+	var statusErr *StatusError
+	if errors.As(err, &statusErr) && statusErr.Code == statusReceiverBusy {
+		statusErr.Hint = pinPairingUnavailableHint
+	}
+	return err
+}
+
+// IsPINPairingUnavailable reports whether err is the receiver refusing to
+// start PIN pairing (453 on /pair-pin-start).
+func IsPINPairingUnavailable(err error) bool {
+	var statusErr *StatusError
+	return errors.As(err, &statusErr) && statusErr.Hint == pinPairingUnavailableHint
 }
 
 // IsAuthFailure reports whether the error looks like the receiver rejected

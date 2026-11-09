@@ -1,3 +1,9 @@
+// Derived from github.com/omarroth/doubletake, internal/airplay/fairplay_md5.go.
+// Copyright (C) the doubletake authors. Licensed under the GNU Lesser General
+// Public License v3.0 or later (LGPL-3.0-or-later); the license texts are in
+// third_party/doubletake/ and the attribution in THIRD_PARTY_NOTICES.md.
+// Unmodified apart from the package name.
+
 package fairplay
 
 import (

@@ -70,7 +70,7 @@ func (p *legacyPairSetup) startRequest(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return errStatus(response, "POST /pair-pin-start")
+	return errPinStart(response)
 }
 
 func (p *legacyPairSetup) finish(ctx context.Context, pin string) (hap.Credentials, error) {
